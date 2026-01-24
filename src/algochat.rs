@@ -10,9 +10,13 @@ use crate::blockchain::{AlgodClient, AlgorandConfig, IndexerClient, NoteTransact
 use crate::crypto::{decrypt_message, encrypt_message};
 use crate::envelope::{decode_envelope, encode_envelope, is_chat_message};
 use crate::keys::derive_keys_from_seed;
-use crate::models::{Conversation, DiscoveredKey, Message, MessageDirection, SendOptions, SendResult};
+use crate::models::{
+    Conversation, DiscoveredKey, Message, MessageDirection, SendOptions, SendResult,
+};
 use crate::queue::SendQueue;
-use crate::storage::{EncryptionKeyStorage, InMemoryKeyStorage, MessageCache, InMemoryMessageCache, PublicKeyCache};
+use crate::storage::{
+    EncryptionKeyStorage, InMemoryKeyStorage, InMemoryMessageCache, MessageCache, PublicKeyCache,
+};
 use crate::types::{AlgoChatError, Result};
 
 /// Configuration for the AlgoChat client.
@@ -114,7 +118,9 @@ where
         let (encryption_private_key, encryption_public_key) = derive_keys_from_seed(seed)?;
 
         // Store the encryption key
-        key_storage.store(&encryption_private_key, address, false).await?;
+        key_storage
+            .store(&encryption_private_key, address, false)
+            .await?;
 
         Ok(Self {
             address: address.to_string(),
@@ -179,7 +185,9 @@ where
         // Cache if found
         if let Some(ref discovered) = key {
             if self.config.cache_public_keys {
-                self.public_key_cache.store(address, discovered.public_key).await;
+                self.public_key_cache
+                    .store(address, discovered.public_key)
+                    .await;
             }
         }
 
@@ -206,7 +214,9 @@ where
     /// Decrypts a message from a sender.
     pub fn decrypt(&self, envelope: &[u8], sender_public_key: &[u8; 32]) -> Result<String> {
         if !is_chat_message(envelope) {
-            return Err(AlgoChatError::InvalidEnvelope("Not an AlgoChat message".to_string()));
+            return Err(AlgoChatError::InvalidEnvelope(
+                "Not an AlgoChat message".to_string(),
+            ));
         }
 
         let decoded = decode_envelope(envelope)?;
@@ -217,8 +227,7 @@ where
             &self.encryption_private_key,
         )?;
 
-        String::from_utf8(plaintext)
-            .map_err(|e| AlgoChatError::DecryptionFailed(e.to_string()))
+        String::from_utf8(plaintext).map_err(|e| AlgoChatError::DecryptionFailed(e.to_string()))
     }
 
     /// Processes a transaction and extracts any chat message.
@@ -240,12 +249,16 @@ where
         // Get the other party's address and key
         let (other_address, other_key) = match direction {
             MessageDirection::Sent => {
-                let key = self.discover_key(&tx.receiver).await?
+                let key = self
+                    .discover_key(&tx.receiver)
+                    .await?
                     .ok_or_else(|| AlgoChatError::PublicKeyNotFound(tx.receiver.clone()))?;
                 (tx.receiver.clone(), key.public_key)
             }
             MessageDirection::Received => {
-                let key = self.discover_key(&tx.sender).await?
+                let key = self
+                    .discover_key(&tx.sender)
+                    .await?
                     .ok_or_else(|| AlgoChatError::PublicKeyNotFound(tx.sender.clone()))?;
                 (tx.sender.clone(), key.public_key)
             }
@@ -270,7 +283,10 @@ where
 
         // Update conversation
         let mut conversations = self.conversations.write().await;
-        if let Some(conv) = conversations.iter_mut().find(|c| c.participant == other_address) {
+        if let Some(conv) = conversations
+            .iter_mut()
+            .find(|c| c.participant == other_address)
+        {
             conv.append(message.clone());
         } else {
             let mut conv = Conversation::new(other_address);
@@ -293,7 +309,8 @@ where
         let mut all_messages = Vec::new();
 
         // Get transactions for our address
-        let txs = self.indexer
+        let txs = self
+            .indexer
             .search_transactions(&self.address, None, Some(100))
             .await?;
 
