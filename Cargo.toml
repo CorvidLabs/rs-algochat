@@ -1,0 +1,22 @@
+[package]
+name = "algochat"
+version = "0.1.0"
+edition = "2021"
+authors = ["CorvidLabs <hello@corvidlabs.com>"]
+description = "Rust implementation of the AlgoChat protocol for encrypted messaging on Algorand"
+license = "MIT"
+repository = "https://github.com/CorvidLabs/rs-algochat"
+keywords = ["algorand", "encryption", "messaging", "blockchain", "chacha20"]
+categories = ["cryptography", "encoding"]
+
+[dependencies]
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+thiserror = "1.0"
+serde_json = "1.0"
+
+[dev-dependencies]
+hex = "0.4"
