@@ -402,6 +402,128 @@ impl PendingMessage {
     }
 }
 
+/// A chat-enabled Algorand account with encryption keys.
+///
+/// The ChatAccount wraps an Algorand address with derived X25519 encryption keys.
+/// The private key should be stored securely using an EncryptionKeyStorage implementation.
+#[derive(Clone)]
+pub struct ChatAccount {
+    /// The Algorand address (58 characters).
+    pub address: String,
+    /// The Ed25519 public key from the Algorand account (32 bytes).
+    pub ed25519_public_key: [u8; 32],
+    /// The X25519 private key for decryption.
+    encryption_private_key: x25519_dalek::StaticSecret,
+    /// The X25519 public key for encryption.
+    encryption_public_key: x25519_dalek::PublicKey,
+}
+
+impl ChatAccount {
+    /// Create a ChatAccount from a 32-byte seed and Ed25519 public key.
+    ///
+    /// This derives the X25519 encryption keys from the seed using HKDF-SHA256.
+    ///
+    /// # Arguments
+    /// * `address` - The Algorand address
+    /// * `seed` - 32-byte seed (first 32 bytes of Algorand secret key)
+    /// * `ed25519_public_key` - The Ed25519 public key (last 32 bytes of secret key)
+    ///
+    /// # Returns
+    /// A new ChatAccount instance
+    pub fn from_seed(
+        address: impl Into<String>,
+        seed: &[u8; 32],
+        ed25519_public_key: [u8; 32],
+    ) -> crate::types::Result<Self> {
+        let (private_key, public_key) = crate::keys::derive_keys_from_seed(seed)?;
+        Ok(Self {
+            address: address.into(),
+            ed25519_public_key,
+            encryption_private_key: private_key,
+            encryption_public_key: public_key,
+        })
+    }
+
+    /// Create a ChatAccount from an Algorand secret key.
+    ///
+    /// The Algorand secret key is 64 bytes: the first 32 are the seed,
+    /// and the last 32 are the Ed25519 public key.
+    ///
+    /// # Arguments
+    /// * `address` - The Algorand address
+    /// * `secret_key` - 64-byte Algorand secret key
+    pub fn from_algorand_account(
+        address: impl Into<String>,
+        secret_key: &[u8; 64],
+    ) -> crate::types::Result<Self> {
+        let seed: [u8; 32] = secret_key[..32].try_into().unwrap();
+        let ed25519_public_key: [u8; 32] = secret_key[32..].try_into().unwrap();
+
+        Self::from_seed(address, &seed, ed25519_public_key)
+    }
+
+    /// Create a ChatAccount by providing the raw keys directly.
+    ///
+    /// This is useful when loading keys from storage.
+    ///
+    /// # Arguments
+    /// * `address` - The Algorand address
+    /// * `ed25519_public_key` - The Ed25519 public key (32 bytes)
+    /// * `encryption_private_key` - The X25519 private key (32 bytes)
+    pub fn from_raw_keys(
+        address: impl Into<String>,
+        ed25519_public_key: [u8; 32],
+        encryption_private_key: [u8; 32],
+    ) -> Self {
+        let private_key = x25519_dalek::StaticSecret::from(encryption_private_key);
+        let public_key = x25519_dalek::PublicKey::from(&private_key);
+
+        Self {
+            address: address.into(),
+            ed25519_public_key,
+            encryption_private_key: private_key,
+            encryption_public_key: public_key,
+        }
+    }
+
+    /// The encryption public key as raw bytes (32 bytes).
+    pub fn public_key_bytes(&self) -> [u8; 32] {
+        *self.encryption_public_key.as_bytes()
+    }
+
+    /// The encryption private key as raw bytes (32 bytes).
+    ///
+    /// Warning: Handle with care. This should only be used for secure storage.
+    pub fn private_key_bytes(&self) -> [u8; 32] {
+        self.encryption_private_key.to_bytes()
+    }
+
+    /// Get a reference to the X25519 private key.
+    pub fn encryption_private_key(&self) -> &x25519_dalek::StaticSecret {
+        &self.encryption_private_key
+    }
+
+    /// Get a reference to the X25519 public key.
+    pub fn encryption_public_key(&self) -> &x25519_dalek::PublicKey {
+        &self.encryption_public_key
+    }
+}
+
+impl std::fmt::Debug for ChatAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChatAccount")
+            .field("address", &self.address)
+            .field("public_key", &hex::encode(self.public_key_bytes()))
+            .finish()
+    }
+}
+
+impl std::fmt::Display for ChatAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ChatAccount({})", self.address)
+    }
+}
+
 /// Generate a simple UUID v4 (for pending message IDs).
 fn uuid_v4() -> String {
     use rand::Rng;

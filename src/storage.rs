@@ -278,6 +278,333 @@ impl EncryptionKeyStorage for InMemoryKeyStorage {
     }
 }
 
+// ============================================================================
+// File-based Key Storage
+// ============================================================================
+
+/// File-based encryption key storage with password protection.
+///
+/// Stores X25519 encryption keys encrypted with AES-256-GCM, using a password
+/// derived key via PBKDF2. Keys are stored in `~/.algochat/keys/`.
+///
+/// ## Storage Format
+///
+/// Each key file contains:
+/// - Salt: 32 bytes (random, for PBKDF2)
+/// - Nonce: 12 bytes (random, for AES-GCM)
+/// - Ciphertext: 32 bytes (encrypted private key)
+/// - Tag: 16 bytes (authentication tag)
+///
+/// ## Security
+///
+/// - Uses PBKDF2 with 100,000 iterations for key derivation
+/// - Uses AES-256-GCM for authenticated encryption
+/// - Keys are stored with 600 permissions (owner read/write only)
+/// - Salt is unique per key file
+#[allow(clippy::type_complexity)]
+pub struct FileKeyStorage {
+    password: Arc<RwLock<Option<String>>>,
+    cached_key: Arc<RwLock<Option<([u8; 32], [u8; 32])>>>, // (salt, derived_key)
+}
+
+impl FileKeyStorage {
+    /// PBKDF2 iteration count
+    const PBKDF2_ITERATIONS: u32 = 100_000;
+
+    /// Salt size in bytes
+    const SALT_SIZE: usize = 32;
+
+    /// AES-GCM nonce size in bytes
+    const NONCE_SIZE: usize = 12;
+
+    /// AES-GCM tag size in bytes (used in MIN_FILE_SIZE calculation)
+    #[allow(dead_code)]
+    const TAG_SIZE: usize = 16;
+
+    /// Directory name for key storage
+    const DIRECTORY_NAME: &'static str = ".algochat/keys";
+
+    /// Minimum file size
+    const MIN_FILE_SIZE: usize = 32 + 12 + 32 + 16;
+
+    /// Creates a new file key storage.
+    pub fn new() -> Self {
+        Self {
+            password: Arc::new(RwLock::new(None)),
+            cached_key: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Creates a new file key storage with a password.
+    pub fn with_password(password: impl Into<String>) -> Self {
+        Self {
+            password: Arc::new(RwLock::new(Some(password.into()))),
+            cached_key: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Sets the password for encryption/decryption.
+    pub async fn set_password(&self, password: impl Into<String>) {
+        let mut pwd = self.password.write().await;
+        *pwd = Some(password.into());
+        let mut cached = self.cached_key.write().await;
+        *cached = None;
+    }
+
+    /// Clears the password and cached keys from memory.
+    pub async fn clear_password(&self) {
+        let mut pwd = self.password.write().await;
+        *pwd = None;
+        let mut cached = self.cached_key.write().await;
+        *cached = None;
+    }
+
+    /// Gets the key storage directory path.
+    fn get_directory() -> std::path::PathBuf {
+        dirs::home_dir()
+            .expect("Could not find home directory")
+            .join(Self::DIRECTORY_NAME)
+    }
+
+    /// Ensures the key storage directory exists.
+    fn ensure_directory() -> Result<std::path::PathBuf> {
+        let directory = Self::get_directory();
+        if !directory.exists() {
+            std::fs::create_dir_all(&directory).map_err(|e| {
+                AlgoChatError::StorageFailed(format!("Failed to create directory: {}", e))
+            })?;
+        }
+
+        // Set directory permissions to 700 (owner only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o700);
+            std::fs::set_permissions(&directory, perms).ok();
+        }
+
+        Ok(directory)
+    }
+
+    /// Returns the file path for a key.
+    fn key_file_path(address: &str, directory: &std::path::Path) -> std::path::PathBuf {
+        directory.join(format!("{}.key", address))
+    }
+
+    /// Derives an encryption key from password using PBKDF2.
+    async fn derive_key(&self, password: &str, salt: &[u8; 32]) -> [u8; 32] {
+        // Check cache
+        {
+            let cached = self.cached_key.read().await;
+            if let Some((cached_salt, cached_key)) = cached.as_ref() {
+                if cached_salt == salt {
+                    return *cached_key;
+                }
+            }
+        }
+
+        // Derive key using PBKDF2-HMAC-SHA256
+        use pbkdf2::pbkdf2_hmac;
+        use sha2::Sha256;
+
+        let mut derived_key = [0u8; 32];
+        pbkdf2_hmac::<Sha256>(
+            password.as_bytes(),
+            salt,
+            Self::PBKDF2_ITERATIONS,
+            &mut derived_key,
+        );
+
+        // Cache for this salt
+        {
+            let mut cached = self.cached_key.write().await;
+            *cached = Some((*salt, derived_key));
+        }
+
+        derived_key
+    }
+
+    /// Sets restrictive file permissions (600 on Unix).
+    #[allow(unused_variables)]
+    fn set_restrictive_permissions(path: &std::path::Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms).ok();
+        }
+    }
+}
+
+impl Default for FileKeyStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl EncryptionKeyStorage for FileKeyStorage {
+    async fn store(
+        &self,
+        private_key: &[u8; 32],
+        address: &str,
+        _require_biometric: bool,
+    ) -> Result<()> {
+        let password = {
+            let pwd = self.password.read().await;
+            pwd.clone().ok_or_else(|| {
+                AlgoChatError::StorageFailed(
+                    "Password is required for file key storage".to_string(),
+                )
+            })?
+        };
+
+        // Ensure directory exists
+        let directory = Self::ensure_directory()?;
+
+        // Generate random salt and nonce (use OsRng which is Send)
+        use rand::RngCore;
+        let mut salt = [0u8; Self::SALT_SIZE];
+        let mut nonce = [0u8; Self::NONCE_SIZE];
+        rand::rngs::OsRng.fill_bytes(&mut salt);
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+
+        // Derive encryption key from password
+        let derived_key = self.derive_key(&password, &salt).await;
+
+        // Encrypt the private key with AES-256-GCM
+        use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+        let cipher = Aes256Gcm::new_from_slice(&derived_key)
+            .map_err(|e| AlgoChatError::EncryptionError(e.to_string()))?;
+        let gcm_nonce = Nonce::from_slice(&nonce);
+        let ciphertext = cipher
+            .encrypt(gcm_nonce, private_key.as_slice())
+            .map_err(|e| AlgoChatError::EncryptionError(e.to_string()))?;
+
+        // Combine: salt + nonce + ciphertext (includes tag)
+        let capacity = Self::SALT_SIZE + Self::NONCE_SIZE + ciphertext.len();
+        let mut file_data = Vec::with_capacity(capacity);
+        file_data.extend_from_slice(&salt);
+        file_data.extend_from_slice(&nonce);
+        file_data.extend_from_slice(&ciphertext);
+
+        // Write to file
+        let file_path = Self::key_file_path(address, &directory);
+        std::fs::write(&file_path, &file_data)
+            .map_err(|e| AlgoChatError::StorageFailed(format!("Failed to write key: {}", e)))?;
+
+        // Set restrictive permissions
+        Self::set_restrictive_permissions(&file_path);
+
+        Ok(())
+    }
+
+    async fn retrieve(&self, address: &str) -> Result<[u8; 32]> {
+        let password = {
+            let pwd = self.password.read().await;
+            pwd.clone().ok_or_else(|| {
+                AlgoChatError::StorageFailed(
+                    "Password is required for file key storage".to_string(),
+                )
+            })?
+        };
+
+        let directory = Self::get_directory();
+        let file_path = Self::key_file_path(address, &directory);
+
+        // Check if file exists
+        if !file_path.exists() {
+            return Err(AlgoChatError::KeyNotFound(address.to_string()));
+        }
+
+        // Read the encrypted file
+        let file_data = std::fs::read(&file_path)
+            .map_err(|e| AlgoChatError::StorageFailed(format!("Failed to read key: {}", e)))?;
+
+        // Validate minimum size
+        if file_data.len() < Self::MIN_FILE_SIZE {
+            return Err(AlgoChatError::StorageFailed(
+                "Invalid key data format".to_string(),
+            ));
+        }
+
+        // Parse: salt + nonce + ciphertext
+        let salt: [u8; 32] = file_data[..Self::SALT_SIZE].try_into().unwrap();
+        let nonce: [u8; 12] = file_data[Self::SALT_SIZE..Self::SALT_SIZE + Self::NONCE_SIZE]
+            .try_into()
+            .unwrap();
+        let ciphertext = &file_data[Self::SALT_SIZE + Self::NONCE_SIZE..];
+
+        // Derive decryption key from password
+        let derived_key = self.derive_key(&password, &salt).await;
+
+        // Decrypt
+        use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+        let cipher = Aes256Gcm::new_from_slice(&derived_key)
+            .map_err(|e| AlgoChatError::DecryptionError(e.to_string()))?;
+        let gcm_nonce = Nonce::from_slice(&nonce);
+        let plaintext = cipher
+            .decrypt(gcm_nonce, ciphertext)
+            .map_err(|_| AlgoChatError::DecryptionError("Decryption failed".to_string()))?;
+
+        if plaintext.len() != 32 {
+            return Err(AlgoChatError::StorageFailed(
+                "Invalid key data format".to_string(),
+            ));
+        }
+
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&plaintext);
+        Ok(key)
+    }
+
+    async fn has_key(&self, address: &str) -> bool {
+        let directory = Self::get_directory();
+        let file_path = Self::key_file_path(address, &directory);
+        file_path.exists()
+    }
+
+    async fn delete(&self, address: &str) -> Result<()> {
+        let directory = Self::get_directory();
+        let file_path = Self::key_file_path(address, &directory);
+
+        if file_path.exists() {
+            std::fs::remove_file(&file_path).map_err(|e| {
+                AlgoChatError::StorageFailed(format!("Failed to delete key: {}", e))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    async fn list_stored_addresses(&self) -> Result<Vec<String>> {
+        let directory = Self::get_directory();
+
+        if !directory.exists() {
+            return Ok(Vec::new());
+        }
+
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|e| AlgoChatError::StorageFailed(format!("Failed to list keys: {}", e)))?;
+
+        let mut addresses = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "key" {
+                    if let Some(stem) = path.file_stem() {
+                        if let Some(name) = stem.to_str() {
+                            addresses.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(addresses)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
