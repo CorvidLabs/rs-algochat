@@ -24,7 +24,7 @@ tokio = { version = "1.0", features = ["sync", "time", "rt"] }
 aes-gcm = "0.10"
 pbkdf2 = "0.12"
 dirs = "5.0"
+hex = "0.4"
 
 [dev-dependencies]
-hex = "0.4"
 tokio = { version = "1.0", features = ["sync", "time", "rt", "macros"] }
