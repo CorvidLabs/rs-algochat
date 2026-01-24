@@ -242,3 +242,58 @@ fn test_decrypt_kotlin_envelopes() {
     println!("Kotlin cross-impl: {}/{} passed", passed, passed + failed);
     assert_eq!(failed, 0, "Some Kotlin envelopes failed to decrypt");
 }
+
+#[test]
+fn test_decrypt_rust_envelopes() {
+    let Some(rust_dir) = find_envelope_dir("rust") else {
+        println!("Skipping Rust envelope tests - directory not found");
+        return;
+    };
+
+    let (bob_private, bob_public) = bob_keys();
+    let messages = test_messages();
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for (key, expected) in &messages {
+        let path = rust_dir.join(format!("{}.hex", key));
+        if !path.exists() {
+            continue;
+        }
+
+        match decrypt_envelope_file(&path, &bob_private, &bob_public) {
+            Some(text) if text == *expected => {
+                passed += 1;
+            }
+            _ => {
+                failed += 1;
+            }
+        }
+    }
+
+    // Test long_text and max_payload separately
+    let long_path = rust_dir.join("long_text.hex");
+    if long_path.exists() {
+        if let Some(text) = decrypt_envelope_file(&long_path, &bob_private, &bob_public) {
+            if text == long_text() {
+                passed += 1;
+            } else {
+                failed += 1;
+            }
+        }
+    }
+
+    let max_path = rust_dir.join("max_payload.hex");
+    if max_path.exists() {
+        if let Some(text) = decrypt_envelope_file(&max_path, &bob_private, &bob_public) {
+            if text == max_payload() {
+                passed += 1;
+            } else {
+                failed += 1;
+            }
+        }
+    }
+
+    println!("Rust cross-impl: {}/{} passed", passed, passed + failed);
+    assert_eq!(failed, 0, "Some Rust envelopes failed to decrypt");
+}
