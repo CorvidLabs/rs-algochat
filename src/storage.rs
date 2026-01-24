@@ -301,6 +301,7 @@ impl EncryptionKeyStorage for InMemoryKeyStorage {
 /// - Uses AES-256-GCM for authenticated encryption
 /// - Keys are stored with 600 permissions (owner read/write only)
 /// - Salt is unique per key file
+#[allow(clippy::type_complexity)]
 pub struct FileKeyStorage {
     password: Arc<RwLock<Option<String>>>,
     cached_key: Arc<RwLock<Option<([u8; 32], [u8; 32])>>>, // (salt, derived_key)
@@ -316,7 +317,8 @@ impl FileKeyStorage {
     /// AES-GCM nonce size in bytes
     const NONCE_SIZE: usize = 12;
 
-    /// AES-GCM tag size in bytes
+    /// AES-GCM tag size in bytes (used in MIN_FILE_SIZE calculation)
+    #[allow(dead_code)]
     const TAG_SIZE: usize = 16;
 
     /// Directory name for key storage
