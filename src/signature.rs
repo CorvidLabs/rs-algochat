@@ -76,7 +76,9 @@ pub fn verify_encryption_key(
 
     let signature = Signature::from_bytes(&signature_bytes);
 
-    Ok(verifying_key.verify(encryption_public_key, &signature).is_ok())
+    Ok(verifying_key
+        .verify(encryption_public_key, &signature)
+        .is_ok())
 }
 
 /// Verifies an encryption key using raw Ed25519 public key bytes.
@@ -104,8 +106,9 @@ pub fn verify_encryption_key_bytes(
         .try_into()
         .map_err(|_| AlgoChatError::InvalidPublicKey("Invalid public key bytes".into()))?;
 
-    let verifying_key = VerifyingKey::from_bytes(&key_bytes)
-        .map_err(|e| AlgoChatError::InvalidPublicKey(format!("Invalid Ed25519 public key: {}", e)))?;
+    let verifying_key = VerifyingKey::from_bytes(&key_bytes).map_err(|e| {
+        AlgoChatError::InvalidPublicKey(format!("Invalid Ed25519 public key: {}", e))
+    })?;
 
     verify_encryption_key(encryption_public_key, &verifying_key, signature)
 }

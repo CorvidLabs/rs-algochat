@@ -177,7 +177,9 @@ pub async fn discover_encryption_key(
     address: &str,
 ) -> Result<Option<DiscoveredKey>> {
     // Search for transactions from this address
-    let transactions = indexer.search_transactions(address, None, Some(100)).await?;
+    let transactions = indexer
+        .search_transactions(address, None, Some(100))
+        .await?;
 
     // Look for key announcements in the note field
     for tx in transactions {

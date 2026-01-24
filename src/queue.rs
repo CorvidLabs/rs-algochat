@@ -58,7 +58,9 @@ impl SendQueue {
 
         if queue.len() >= self.config.max_queue_size {
             // Remove oldest failed messages to make room
-            queue.retain(|m| m.status != PendingStatus::Failed || m.can_retry(self.config.max_retries));
+            queue.retain(|m| {
+                m.status != PendingStatus::Failed || m.can_retry(self.config.max_retries)
+            });
 
             if queue.len() >= self.config.max_queue_size {
                 return Err(crate::types::AlgoChatError::StorageFailed(
@@ -192,13 +194,19 @@ impl SendQueue {
     /// Returns the number of pending messages.
     pub async fn pending_count(&self) -> usize {
         let queue = self.queue.read().await;
-        queue.iter().filter(|m| m.status == PendingStatus::Pending).count()
+        queue
+            .iter()
+            .filter(|m| m.status == PendingStatus::Pending)
+            .count()
     }
 
     /// Returns the number of failed messages.
     pub async fn failed_count(&self) -> usize {
         let queue = self.queue.read().await;
-        queue.iter().filter(|m| m.status == PendingStatus::Failed).count()
+        queue
+            .iter()
+            .filter(|m| m.status == PendingStatus::Failed)
+            .count()
     }
 
     /// Returns messages for a specific recipient.
