@@ -363,7 +363,10 @@ mod tests {
                     passed += 1;
                 }
                 Ok(Some(decrypted)) => {
-                    println!("✗ {} - mismatch: {:?} vs {:?}", key, decrypted.text, expected);
+                    println!(
+                        "✗ {} - mismatch: {:?} vs {:?}",
+                        key, decrypted.text, expected
+                    );
                     failed += 1;
                 }
                 Ok(None) => {
