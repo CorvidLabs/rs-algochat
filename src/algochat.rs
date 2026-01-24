@@ -7,16 +7,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::blockchain::{AlgodClient, AlgorandConfig, IndexerClient, NoteTransaction};
+use x25519_dalek::{PublicKey, StaticSecret};
+
 use crate::crypto::{decrypt_message, encrypt_message};
-use crate::envelope::{decode_envelope, encode_envelope, is_chat_message};
+use crate::envelope::{is_chat_message, ChatEnvelope};
 use crate::keys::derive_keys_from_seed;
-use crate::models::{
-    Conversation, DiscoveredKey, Message, MessageDirection, SendOptions, SendResult,
-};
+use crate::models::{Conversation, DiscoveredKey, Message, MessageDirection};
 use crate::queue::SendQueue;
-use crate::storage::{
-    EncryptionKeyStorage, InMemoryKeyStorage, InMemoryMessageCache, MessageCache, PublicKeyCache,
-};
+use crate::storage::{EncryptionKeyStorage, MessageCache, PublicKeyCache};
 use crate::types::{AlgoChatError, Result};
 
 /// Configuration for the AlgoChat client.
@@ -74,9 +72,10 @@ where
     address: String,
     /// The user's Ed25519 public key (from Algorand account).
     ed25519_public_key: [u8; 32],
-    /// The user's X25519 encryption keys.
-    encryption_private_key: [u8; 32],
-    encryption_public_key: [u8; 32],
+    /// The user's X25519 encryption private key.
+    encryption_private_key: StaticSecret,
+    /// The user's X25519 encryption public key.
+    encryption_public_key: PublicKey,
     /// Configuration.
     config: AlgoChatConfig,
     /// Algod client for submitting transactions.
@@ -117,9 +116,10 @@ where
         // Derive encryption keys from the seed
         let (encryption_private_key, encryption_public_key) = derive_keys_from_seed(seed)?;
 
-        // Store the encryption key
+        // Store the encryption key (convert to bytes for storage)
+        let private_key_bytes: [u8; 32] = encryption_private_key.to_bytes();
         key_storage
-            .store(&encryption_private_key, address, false)
+            .store(&private_key_bytes, address, false)
             .await?;
 
         Ok(Self {
@@ -143,9 +143,9 @@ where
         &self.address
     }
 
-    /// Returns the user's encryption public key.
-    pub fn encryption_public_key(&self) -> &[u8; 32] {
-        &self.encryption_public_key
+    /// Returns the user's encryption public key as bytes.
+    pub fn encryption_public_key(&self) -> [u8; 32] {
+        *self.encryption_public_key.as_bytes()
     }
 
     /// Gets or creates a conversation with the given participant.
@@ -196,38 +196,39 @@ where
 
     /// Encrypts a message for a recipient.
     pub fn encrypt(&self, message: &str, recipient_public_key: &[u8; 32]) -> Result<Vec<u8>> {
-        let ciphertext = encrypt_message(
-            message.as_bytes(),
-            recipient_public_key,
+        let recipient_key = PublicKey::from(*recipient_public_key);
+        let envelope = encrypt_message(
+            message,
             &self.encryption_private_key,
-        )?;
-
-        let envelope = encode_envelope(
-            &ciphertext,
             &self.encryption_public_key,
-            recipient_public_key,
+            &recipient_key,
         )?;
 
-        Ok(envelope)
+        Ok(envelope.encode())
     }
 
     /// Decrypts a message from a sender.
-    pub fn decrypt(&self, envelope: &[u8], sender_public_key: &[u8; 32]) -> Result<String> {
-        if !is_chat_message(envelope) {
+    pub fn decrypt(&self, envelope_bytes: &[u8], _sender_public_key: &[u8; 32]) -> Result<String> {
+        if !is_chat_message(envelope_bytes) {
             return Err(AlgoChatError::InvalidEnvelope(
                 "Not an AlgoChat message".to_string(),
             ));
         }
 
-        let decoded = decode_envelope(envelope)?;
+        let envelope = ChatEnvelope::decode(envelope_bytes)?;
 
-        let plaintext = decrypt_message(
-            &decoded.ciphertext,
-            sender_public_key,
+        let decrypted = decrypt_message(
+            &envelope,
             &self.encryption_private_key,
+            &self.encryption_public_key,
         )?;
 
-        String::from_utf8(plaintext).map_err(|e| AlgoChatError::DecryptionFailed(e.to_string()))
+        match decrypted {
+            Some(content) => Ok(content.text),
+            None => Err(AlgoChatError::DecryptionError(
+                "Message was a key-publish, not a chat message".to_string(),
+            )),
+        }
     }
 
     /// Processes a transaction and extracts any chat message.

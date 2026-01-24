@@ -5,7 +5,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
 use crate::models::{PendingMessage, PendingStatus};
@@ -95,7 +95,7 @@ impl SendQueue {
     /// Returns messages ready for retry.
     pub async fn ready_for_retry(&self) -> Vec<PendingMessage> {
         let queue = self.queue.read().await;
-        let now = Instant::now();
+        let now = SystemTime::now();
 
         queue
             .iter()
@@ -105,7 +105,10 @@ impl SendQueue {
                 }
 
                 match m.last_attempt {
-                    Some(last) => now.duration_since(last) >= self.config.retry_delay,
+                    Some(last) => now
+                        .duration_since(last)
+                        .map(|d| d >= self.config.retry_delay)
+                        .unwrap_or(true),
                     None => true,
                 }
             })

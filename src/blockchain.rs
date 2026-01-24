@@ -4,7 +4,7 @@
 //! and indexers. Implementations can use any Algorand SDK.
 
 use crate::models::DiscoveredKey;
-use crate::types::{AlgoChatError, Result};
+use crate::types::Result;
 
 /// Configuration for Algorand node connections.
 #[derive(Debug, Clone)]
