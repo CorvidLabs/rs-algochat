@@ -250,10 +250,9 @@ impl Default for SendQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::ReplyContext;
 
-    fn test_message(id: &str, recipient: &str) -> PendingMessage {
-        PendingMessage::create(recipient.to_string(), "Test content".to_string(), None)
+    fn test_message(_id: &str, recipient: &str) -> PendingMessage {
+        PendingMessage::new(recipient.to_string(), "Test content".to_string(), None)
     }
 
     #[tokio::test]
