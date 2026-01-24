@@ -63,6 +63,7 @@ impl DecryptedContent {
 /// Errors that can occur during AlgoChat operations.
 #[derive(Error, Debug)]
 pub enum AlgoChatError {
+    // Encryption Errors
     /// Invalid seed length.
     #[error("Invalid seed length: expected 32 bytes, got {0}")]
     InvalidSeedLength(usize),
@@ -70,10 +71,6 @@ pub enum AlgoChatError {
     /// Message too large.
     #[error("Message too large: {0} bytes (max {MAX_PAYLOAD_SIZE})")]
     MessageTooLarge(usize),
-
-    /// Invalid envelope data.
-    #[error("Invalid envelope: {0}")]
-    InvalidEnvelope(String),
 
     /// Encryption failed.
     #[error("Encryption failed: {0}")]
@@ -83,6 +80,31 @@ pub enum AlgoChatError {
     #[error("Decryption failed: {0}")]
     DecryptionError(String),
 
+    /// Failed to encode message as UTF-8.
+    #[error("Encoding failed: {0}")]
+    EncodingError(String),
+
+    /// Failed to generate secure random bytes.
+    #[error("Random generation failed")]
+    RandomGenerationFailed,
+
+    /// Invalid public key format.
+    #[error("Invalid public key: {0}")]
+    InvalidPublicKey(String),
+
+    /// Could not derive encryption keys.
+    #[error("Key derivation failed: {0}")]
+    KeyDerivationFailed(String),
+
+    /// Signature verification failed.
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
+
+    // Envelope Errors
+    /// Invalid envelope data.
+    #[error("Invalid envelope: {0}")]
+    InvalidEnvelope(String),
+
     /// Unknown protocol version.
     #[error("Unknown protocol version: {0}")]
     UnknownVersion(u8),
@@ -90,6 +112,48 @@ pub enum AlgoChatError {
     /// Unknown protocol ID.
     #[error("Unknown protocol ID: {0}")]
     UnknownProtocolId(u8),
+
+    // Network Errors
+    /// Indexer is not configured.
+    #[error("Indexer not configured")]
+    IndexerNotConfigured,
+
+    /// Could not find public key for address.
+    #[error("Public key not found for address: {0}")]
+    PublicKeyNotFound(String),
+
+    /// Invalid recipient address.
+    #[error("Invalid recipient: {0}")]
+    InvalidRecipient(String),
+
+    // Transaction Errors
+    /// Transaction failed.
+    #[error("Transaction failed: {0}")]
+    TransactionFailed(String),
+
+    /// Insufficient balance.
+    #[error("Insufficient balance: need {required} microAlgos, have {available}")]
+    InsufficientBalance { required: u64, available: u64 },
+
+    // Storage Errors
+    /// Key not found in storage.
+    #[error("Key not found for address: {0}")]
+    KeyNotFound(String),
+
+    /// Storage operation failed.
+    #[error("Storage failed: {0}")]
+    StorageFailed(String),
+
+    // Queue Errors
+    /// Message not found in queue.
+    #[error("Message not found: {0}")]
+    MessageNotFound(String),
 }
 
 pub type Result<T> = std::result::Result<T, AlgoChatError>;
+
+/// Size of an Ed25519 signature in bytes.
+pub const SIGNATURE_SIZE: usize = 64;
+
+/// Minimum payment amount in microAlgos (0.001 ALGO).
+pub const MINIMUM_PAYMENT: u64 = 1000;

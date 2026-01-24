@@ -11,12 +11,17 @@ categories = ["cryptography", "encoding"]
 
 [dependencies]
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 rand = "0.8"
 thiserror = "1.0"
 serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["sync", "time", "rt"] }
 
 [dev-dependencies]
 hex = "0.4"
+tokio = { version = "1.0", features = ["sync", "time", "rt", "macros"] }
