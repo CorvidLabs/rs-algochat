@@ -246,6 +246,7 @@ fn parse_message_payload(data: &[u8]) -> Result<DecryptedContent> {
 mod tests {
     use super::*;
     use crate::keys::derive_keys_from_seed;
+    use std::collections::HashMap;
 
     const ALICE_SEED_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000001";
     const BOB_SEED_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000002";
@@ -258,6 +259,37 @@ mod tests {
     fn bob_keys() -> (StaticSecret, PublicKey) {
         let seed = hex::decode(BOB_SEED_HEX).unwrap();
         derive_keys_from_seed(&seed).unwrap()
+    }
+
+    fn test_messages() -> HashMap<&'static str, &'static str> {
+        let mut messages = HashMap::new();
+        messages.insert("empty", "");
+        messages.insert("single_char", "X");
+        messages.insert("whitespace", "   \t\n   ");
+        messages.insert("numbers", "1234567890");
+        messages.insert("punctuation", "!@#$%^&*()_+-=[]{}\\|;':\",./<>?");
+        messages.insert("newlines", "Line 1\nLine 2\nLine 3");
+        messages.insert("emoji_simple", "Hello 👋 World 🌍");
+        messages.insert("emoji_zwj", "Family: 👨‍👩‍👧‍👦");
+        messages.insert("chinese", "你好世界 - Hello World");
+        messages.insert("arabic", "مرحبا بالعالم");
+        messages.insert("japanese", "こんにちは世界 カタカナ 漢字");
+        messages.insert("korean", "안녕하세요 세계");
+        messages.insert("accents", "Café résumé naïve");
+        messages.insert("cyrillic", "Привет мир");
+        messages.insert("json", r#"{"key": "value", "num": 42}"#);
+        messages.insert("html", r#"<div class="test">Content</div>"#);
+        messages.insert("url", "https://example.com/path?q=test&lang=en");
+        messages.insert("code", r#"func hello() { print("Hi") }"#);
+        messages
+    }
+
+    fn long_text() -> String {
+        "The quick brown fox jumps over the lazy dog. ".repeat(11)
+    }
+
+    fn max_payload() -> String {
+        "A".repeat(882)
     }
 
     #[test]
@@ -303,5 +335,107 @@ mod tests {
 
         let result = encrypt_message(&message, &alice_private, &alice_public, &bob_public);
         assert!(matches!(result, Err(AlgoChatError::MessageTooLarge(_))));
+    }
+
+    #[test]
+    fn test_all_message_types() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+
+        let messages = test_messages();
+        let mut passed = 0;
+        let mut failed = 0;
+
+        for (key, expected) in &messages {
+            let envelope =
+                match encrypt_message(expected, &alice_private, &alice_public, &bob_public) {
+                    Ok(env) => env,
+                    Err(e) => {
+                        println!("✗ {} - encryption failed: {:?}", key, e);
+                        failed += 1;
+                        continue;
+                    }
+                };
+
+            match decrypt_message(&envelope, &bob_private, &bob_public) {
+                Ok(Some(decrypted)) if decrypted.text == *expected => {
+                    println!("✓ {}", key);
+                    passed += 1;
+                }
+                Ok(Some(decrypted)) => {
+                    println!("✗ {} - mismatch: {:?} vs {:?}", key, decrypted.text, expected);
+                    failed += 1;
+                }
+                Ok(None) => {
+                    println!("✗ {} - returned None", key);
+                    failed += 1;
+                }
+                Err(e) => {
+                    println!("✗ {} - decryption failed: {:?}", key, e);
+                    failed += 1;
+                }
+            }
+        }
+
+        println!("Message types: {}/{} passed", passed, passed + failed);
+        assert_eq!(failed, 0, "Some message types failed");
+    }
+
+    #[test]
+    fn test_long_text_message() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+
+        let message = long_text();
+
+        let envelope =
+            encrypt_message(&message, &alice_private, &alice_public, &bob_public).unwrap();
+
+        let decrypted = decrypt_message(&envelope, &bob_private, &bob_public)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decrypted.text, message);
+    }
+
+    #[test]
+    fn test_max_payload_message() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+
+        let message = max_payload();
+
+        let envelope =
+            encrypt_message(&message, &alice_private, &alice_public, &bob_public).unwrap();
+
+        let decrypted = decrypt_message(&envelope, &bob_private, &bob_public)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decrypted.text, message);
+    }
+
+    #[test]
+    fn test_bidirectional_all_messages() {
+        let (alice_private, alice_public) = alice_keys();
+        let (_, bob_public) = bob_keys();
+
+        let messages = test_messages();
+
+        for (key, expected) in &messages {
+            let envelope =
+                encrypt_message(expected, &alice_private, &alice_public, &bob_public).unwrap();
+
+            // Sender (Alice) can decrypt their own message
+            let decrypted = decrypt_message(&envelope, &alice_private, &alice_public)
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(
+                decrypted.text, *expected,
+                "Bidirectional decryption failed for {}",
+                key
+            );
+        }
     }
 }
