@@ -1,5 +1,12 @@
 # rs-algochat
 
+[![CI](https://img.shields.io/github/actions/workflow/status/CorvidLabs/rs-algochat/ci.yml?label=CI&branch=main)](https://github.com/CorvidLabs/rs-algochat/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/algochat)](https://crates.io/crates/algochat)
+[![License](https://img.shields.io/github/license/CorvidLabs/rs-algochat)](https://github.com/CorvidLabs/rs-algochat/blob/main/LICENSE)
+[![Version](https://img.shields.io/github/v/release/CorvidLabs/rs-algochat)](https://github.com/CorvidLabs/rs-algochat/releases)
+
+> **Pre-1.0 Notice**: This library is under active development. The API may change between minor versions until 1.0.
+
 Rust implementation of the AlgoChat protocol for encrypted messaging on Algorand.
 
 ## Installation
