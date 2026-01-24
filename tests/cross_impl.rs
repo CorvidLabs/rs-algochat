@@ -64,13 +64,26 @@ fn decrypt_envelope_file(
     Some(result.text)
 }
 
+fn find_envelope_dir(impl_name: &str) -> Option<std::path::PathBuf> {
+    // Try CI path first (when rs-algochat is checked out inside test-algochat)
+    let ci_path = Path::new(&format!("../test-envelopes-{}", impl_name));
+    if ci_path.exists() {
+        return Some(ci_path.to_path_buf());
+    }
+    // Try local dev path (when repos are siblings)
+    let dev_path = Path::new(&format!("../test-algochat/test-envelopes-{}", impl_name));
+    if dev_path.exists() {
+        return Some(dev_path.to_path_buf());
+    }
+    None
+}
+
 #[test]
 fn test_decrypt_swift_envelopes() {
-    let swift_dir = Path::new("../test-algochat/test-envelopes-swift");
-    if !swift_dir.exists() {
+    let Some(swift_dir) = find_envelope_dir("swift") else {
         println!("Skipping Swift envelope tests - directory not found");
         return;
-    }
+    };
 
     let (bob_private, bob_public) = bob_keys();
     let messages = test_messages();
@@ -130,11 +143,10 @@ fn test_decrypt_swift_envelopes() {
 
 #[test]
 fn test_decrypt_typescript_envelopes() {
-    let ts_dir = Path::new("../test-algochat/test-envelopes-ts");
-    if !ts_dir.exists() {
+    let Some(ts_dir) = find_envelope_dir("ts") else {
         println!("Skipping TypeScript envelope tests - directory not found");
         return;
-    }
+    };
 
     let (bob_private, bob_public) = bob_keys();
     let messages = test_messages();
@@ -167,11 +179,10 @@ fn test_decrypt_typescript_envelopes() {
 
 #[test]
 fn test_decrypt_python_envelopes() {
-    let py_dir = Path::new("../test-algochat/test-envelopes-python");
-    if !py_dir.exists() {
+    let Some(py_dir) = find_envelope_dir("python") else {
         println!("Skipping Python envelope tests - directory not found");
         return;
-    }
+    };
 
     let (bob_private, bob_public) = bob_keys();
     let messages = test_messages();
@@ -200,11 +211,10 @@ fn test_decrypt_python_envelopes() {
 
 #[test]
 fn test_decrypt_kotlin_envelopes() {
-    let kt_dir = Path::new("../test-algochat/test-envelopes-kotlin");
-    if !kt_dir.exists() {
+    let Some(kt_dir) = find_envelope_dir("kotlin") else {
         println!("Skipping Kotlin envelope tests - directory not found");
         return;
-    }
+    };
 
     let (bob_private, bob_public) = bob_keys();
     let messages = test_messages();
