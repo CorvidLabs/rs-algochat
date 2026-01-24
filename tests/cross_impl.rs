@@ -197,3 +197,36 @@ fn test_decrypt_python_envelopes() {
     println!("Python cross-impl: {}/{} passed", passed, passed + failed);
     assert_eq!(failed, 0, "Some Python envelopes failed to decrypt");
 }
+
+#[test]
+fn test_decrypt_kotlin_envelopes() {
+    let kt_dir = Path::new("../test-algochat/test-envelopes-kotlin");
+    if !kt_dir.exists() {
+        println!("Skipping Kotlin envelope tests - directory not found");
+        return;
+    }
+
+    let (bob_private, bob_public) = bob_keys();
+    let messages = test_messages();
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for (key, expected) in &messages {
+        let path = kt_dir.join(format!("{}.hex", key));
+        if !path.exists() {
+            continue;
+        }
+
+        match decrypt_envelope_file(&path, &bob_private, &bob_public) {
+            Some(text) if text == *expected => {
+                passed += 1;
+            }
+            _ => {
+                failed += 1;
+            }
+        }
+    }
+
+    println!("Kotlin cross-impl: {}/{} passed", passed, passed + failed);
+    assert_eq!(failed, 0, "Some Kotlin envelopes failed to decrypt");
+}
