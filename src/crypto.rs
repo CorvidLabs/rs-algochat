@@ -12,8 +12,8 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use crate::envelope::ChatEnvelope;
 use crate::keys::{generate_ephemeral_keypair, x25519_ecdh};
 use crate::types::{
-    AlgoChatError, DecryptedContent, Result, ENCRYPTION_INFO_PREFIX, MAX_PAYLOAD_SIZE,
-    NONCE_SIZE, PROTOCOL_ID, PROTOCOL_VERSION, SENDER_KEY_INFO_PREFIX,
+    AlgoChatError, DecryptedContent, Result, ENCRYPTION_INFO_PREFIX, MAX_PAYLOAD_SIZE, NONCE_SIZE,
+    PROTOCOL_ID, PROTOCOL_VERSION, SENDER_KEY_INFO_PREFIX,
 };
 
 /// Encrypt a message for a recipient.
@@ -88,7 +88,9 @@ pub fn encrypt_message(
         .map_err(|e| AlgoChatError::EncryptionError(format!("Sender cipher init failed: {}", e)))?;
     let encrypted_sender_key = sender_cipher
         .encrypt(nonce, symmetric_key.as_slice())
-        .map_err(|e| AlgoChatError::EncryptionError(format!("Sender key encryption failed: {}", e)))?;
+        .map_err(|e| {
+            AlgoChatError::EncryptionError(format!("Sender key encryption failed: {}", e))
+        })?;
 
     Ok(ChatEnvelope {
         version: PROTOCOL_VERSION,
@@ -187,11 +189,14 @@ fn decrypt_as_sender(
 
     let symmetric_key = sender_cipher
         .decrypt(nonce, envelope.encrypted_sender_key.as_slice())
-        .map_err(|e| AlgoChatError::DecryptionError(format!("Sender key decryption failed: {}", e)))?;
+        .map_err(|e| {
+            AlgoChatError::DecryptionError(format!("Sender key decryption failed: {}", e))
+        })?;
 
     // Now decrypt the message
-    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key)
-        .map_err(|e| AlgoChatError::DecryptionError(format!("Message cipher init failed: {}", e)))?;
+    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key).map_err(|e| {
+        AlgoChatError::DecryptionError(format!("Message cipher init failed: {}", e))
+    })?;
 
     cipher
         .decrypt(nonce, envelope.ciphertext.as_slice())
@@ -237,7 +242,6 @@ fn parse_message_payload(data: &[u8]) -> Result<DecryptedContent> {
     Ok(DecryptedContent::new(text))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +267,8 @@ mod tests {
 
         let message = "Hello from Rust!";
 
-        let envelope = encrypt_message(message, &alice_private, &alice_public, &bob_public).unwrap();
+        let envelope =
+            encrypt_message(message, &alice_private, &alice_public, &bob_public).unwrap();
 
         let decrypted = decrypt_message(&envelope, &bob_private, &bob_public)
             .unwrap()
@@ -279,7 +284,8 @@ mod tests {
 
         let message = "I sent this!";
 
-        let envelope = encrypt_message(message, &alice_private, &alice_public, &bob_public).unwrap();
+        let envelope =
+            encrypt_message(message, &alice_private, &alice_public, &bob_public).unwrap();
 
         let decrypted = decrypt_message(&envelope, &alice_private, &alice_public)
             .unwrap()
