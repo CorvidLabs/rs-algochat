@@ -61,6 +61,7 @@ impl AlgoChatConfig {
 ///
 /// This provides a high-level API for sending and receiving encrypted
 /// messages on the Algorand blockchain.
+#[allow(dead_code)]
 pub struct AlgoChat<A, I, S, M>
 where
     A: AlgodClient,
@@ -298,7 +299,7 @@ where
         // Cache message
         if self.config.cache_messages {
             self.message_cache
-                .store(&[message.clone()], &message.sender)
+                .store(std::slice::from_ref(&message), &message.sender)
                 .await?;
         }
 
