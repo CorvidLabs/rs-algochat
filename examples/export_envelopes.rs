@@ -14,7 +14,10 @@ fn test_messages() -> HashMap<&'static str, String> {
     messages.insert("single_char", "X".to_string());
     messages.insert("whitespace", "   \t\n   ".to_string());
     messages.insert("numbers", "1234567890".to_string());
-    messages.insert("punctuation", "!@#$%^&*()_+-=[]{}\\|;':\",./<>?".to_string());
+    messages.insert(
+        "punctuation",
+        "!@#$%^&*()_+-=[]{}\\|;':\",./<>?".to_string(),
+    );
     messages.insert("newlines", "Line 1\nLine 2\nLine 3".to_string());
     messages.insert("emoji_simple", "Hello 👋 World 🌍".to_string());
     messages.insert("emoji_zwj", "Family: 👨‍👩‍👧‍👦".to_string());
@@ -38,7 +41,10 @@ fn test_messages() -> HashMap<&'static str, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let output_dir = args.get(1).map(|s| s.as_str()).unwrap_or("test-envelopes-rust");
+    let output_dir = args
+        .get(1)
+        .map(|s| s.as_str())
+        .unwrap_or("test-envelopes-rust");
 
     let alice_seed = hex::decode(ALICE_SEED_HEX).unwrap();
     let bob_seed = hex::decode(BOB_SEED_HEX).unwrap();
