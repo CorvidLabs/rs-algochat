@@ -451,20 +451,21 @@ impl EncryptionKeyStorage for FileKeyStorage {
         let password = {
             let pwd = self.password.read().await;
             pwd.clone().ok_or_else(|| {
-                AlgoChatError::StorageFailed("Password is required for file key storage".to_string())
+                AlgoChatError::StorageFailed(
+                    "Password is required for file key storage".to_string(),
+                )
             })?
         };
 
         // Ensure directory exists
         let directory = Self::ensure_directory()?;
 
-        // Generate random salt and nonce
+        // Generate random salt and nonce (use OsRng which is Send)
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
         let mut salt = [0u8; Self::SALT_SIZE];
         let mut nonce = [0u8; Self::NONCE_SIZE];
-        rng.fill_bytes(&mut salt);
-        rng.fill_bytes(&mut nonce);
+        rand::rngs::OsRng.fill_bytes(&mut salt);
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
 
         // Derive encryption key from password
         let derived_key = self.derive_key(&password, &salt).await;
@@ -479,7 +480,8 @@ impl EncryptionKeyStorage for FileKeyStorage {
             .map_err(|e| AlgoChatError::EncryptionError(e.to_string()))?;
 
         // Combine: salt + nonce + ciphertext (includes tag)
-        let mut file_data = Vec::with_capacity(Self::SALT_SIZE + Self::NONCE_SIZE + ciphertext.len());
+        let capacity = Self::SALT_SIZE + Self::NONCE_SIZE + ciphertext.len();
+        let mut file_data = Vec::with_capacity(capacity);
         file_data.extend_from_slice(&salt);
         file_data.extend_from_slice(&nonce);
         file_data.extend_from_slice(&ciphertext);
@@ -499,7 +501,9 @@ impl EncryptionKeyStorage for FileKeyStorage {
         let password = {
             let pwd = self.password.read().await;
             pwd.clone().ok_or_else(|| {
-                AlgoChatError::StorageFailed("Password is required for file key storage".to_string())
+                AlgoChatError::StorageFailed(
+                    "Password is required for file key storage".to_string(),
+                )
             })?
         };
 
