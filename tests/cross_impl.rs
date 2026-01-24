@@ -66,12 +66,14 @@ fn decrypt_envelope_file(
 
 fn find_envelope_dir(impl_name: &str) -> Option<std::path::PathBuf> {
     // Try CI path first (when rs-algochat is checked out inside test-algochat)
-    let ci_path = Path::new(&format!("../test-envelopes-{}", impl_name));
+    let ci_path_str = format!("../test-envelopes-{}", impl_name);
+    let ci_path = Path::new(&ci_path_str);
     if ci_path.exists() {
         return Some(ci_path.to_path_buf());
     }
     // Try local dev path (when repos are siblings)
-    let dev_path = Path::new(&format!("../test-algochat/test-envelopes-{}", impl_name));
+    let dev_path_str = format!("../test-algochat/test-envelopes-{}", impl_name);
+    let dev_path = Path::new(&dev_path_str);
     if dev_path.exists() {
         return Some(dev_path.to_path_buf());
     }
