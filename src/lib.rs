@@ -7,7 +7,7 @@ mod envelope;
 mod keys;
 mod types;
 
-pub use types::*;
-pub use keys::*;
 pub use crypto::*;
 pub use envelope::*;
+pub use keys::*;
+pub use types::*;

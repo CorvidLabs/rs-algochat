@@ -47,7 +47,11 @@ fn bob_keys() -> (x25519_dalek::StaticSecret, x25519_dalek::PublicKey) {
     derive_keys_from_seed(&seed).unwrap()
 }
 
-fn decrypt_envelope_file(path: &Path, bob_private: &x25519_dalek::StaticSecret, bob_public: &x25519_dalek::PublicKey) -> Option<String> {
+fn decrypt_envelope_file(
+    path: &Path,
+    bob_private: &x25519_dalek::StaticSecret,
+    bob_public: &x25519_dalek::PublicKey,
+) -> Option<String> {
     let hex_content = fs::read_to_string(path).ok()?.trim().to_string();
     let envelope_bytes = hex::decode(&hex_content).ok()?;
 
@@ -153,7 +157,11 @@ fn test_decrypt_typescript_envelopes() {
         }
     }
 
-    println!("TypeScript cross-impl: {}/{} passed", passed, passed + failed);
+    println!(
+        "TypeScript cross-impl: {}/{} passed",
+        passed,
+        passed + failed
+    );
     assert_eq!(failed, 0, "Some TypeScript envelopes failed to decrypt");
 }
 
