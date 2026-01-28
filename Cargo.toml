@@ -23,6 +23,7 @@ async-trait = "0.1"
 tokio = { version = "1.0", features = ["sync", "time", "rt"] }
 aes-gcm = "0.10"
 pbkdf2 = "0.12"
+base64 = "0.22"
 dirs = "5.0"
 hex = "0.4"
 
