@@ -248,9 +248,9 @@ mod tests {
 
         let message = "Hello PSK from Rust!";
 
-        let envelope = encrypt_psk_message(
-            message, &alice_private, &alice_public, &bob_public, &psk, 0,
-        ).unwrap();
+        let envelope =
+            encrypt_psk_message(message, &alice_private, &alice_public, &bob_public, &psk, 0)
+                .unwrap();
 
         let decrypted = decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk).unwrap();
         assert_eq!(decrypted, message);
@@ -264,9 +264,9 @@ mod tests {
 
         let message = "I sent this PSK message!";
 
-        let envelope = encrypt_psk_message(
-            message, &alice_private, &alice_public, &bob_public, &psk, 0,
-        ).unwrap();
+        let envelope =
+            encrypt_psk_message(message, &alice_private, &alice_public, &bob_public, &psk, 0)
+                .unwrap();
 
         let decrypted = decrypt_psk_message(&envelope, &alice_private, &alice_public, &psk).unwrap();
         assert_eq!(decrypted, message);
@@ -282,8 +282,14 @@ mod tests {
             let message = format!("Message at counter {}", counter);
 
             let envelope = encrypt_psk_message(
-                &message, &alice_private, &alice_public, &bob_public, &psk, counter,
-            ).unwrap();
+                &message,
+                &alice_private,
+                &alice_public,
+                &bob_public,
+                &psk,
+                counter,
+            )
+            .unwrap();
 
             assert_eq!(envelope.ratchet_counter, counter);
 
@@ -301,9 +307,9 @@ mod tests {
 
         let message = "Secret message";
 
-        let envelope = encrypt_psk_message(
-            message, &alice_private, &alice_public, &bob_public, &psk, 0,
-        ).unwrap();
+        let envelope =
+            encrypt_psk_message(message, &alice_private, &alice_public, &bob_public, &psk, 0)
+                .unwrap();
 
         let result = decrypt_psk_message(&envelope, &bob_private, &bob_public, &wrong_psk);
         assert!(result.is_err());
@@ -318,7 +324,12 @@ mod tests {
         let message = "A".repeat(PSK_MAX_PAYLOAD_SIZE + 1);
 
         let result = encrypt_psk_message(
-            &message, &alice_private, &alice_public, &bob_public, &psk, 0,
+            &message,
+            &alice_private,
+            &alice_public,
+            &bob_public,
+            &psk,
+            0,
         );
         assert!(matches!(result, Err(AlgoChatError::MessageTooLarge(_))));
     }
@@ -332,8 +343,14 @@ mod tests {
         let message = "A".repeat(PSK_MAX_PAYLOAD_SIZE);
 
         let envelope = encrypt_psk_message(
-            &message, &alice_private, &alice_public, &bob_public, &psk, 0,
-        ).unwrap();
+            &message,
+            &alice_private,
+            &alice_public,
+            &bob_public,
+            &psk,
+            0,
+        )
+        .unwrap();
 
         let decrypted = decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk).unwrap();
         assert_eq!(decrypted, message);
@@ -347,9 +364,9 @@ mod tests {
 
         let message = "";
 
-        let envelope = encrypt_psk_message(
-            message, &alice_private, &alice_public, &bob_public, &psk, 0,
-        ).unwrap();
+        let envelope =
+            encrypt_psk_message(message, &alice_private, &alice_public, &bob_public, &psk, 0)
+                .unwrap();
 
         let decrypted = decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk).unwrap();
         assert_eq!(decrypted, message);

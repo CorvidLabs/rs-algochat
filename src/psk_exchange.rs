@@ -40,7 +40,10 @@ impl PSKExchangeURI {
     /// The URI string in the format `algochat-psk://v1?addr=...&psk=...&label=...`
     pub fn encode(&self) -> String {
         let psk_encoded = URL_SAFE_NO_PAD.encode(&self.psk);
-        let mut uri = format!("algochat-psk://v1?addr={}&psk={}", self.address, psk_encoded);
+        let mut uri = format!(
+            "algochat-psk://v1?addr={}&psk={}",
+            self.address, psk_encoded
+        );
         if let Some(ref label) = self.label {
             uri.push_str(&format!("&label={}", url_encode(label)));
         }
@@ -192,11 +195,7 @@ mod tests {
 
     #[test]
     fn test_url_encoding_special_chars() {
-        let uri = PSKExchangeURI::new(
-            "ADDR",
-            vec![0x00; 32],
-            Some("Hello World!".to_string()),
-        );
+        let uri = PSKExchangeURI::new("ADDR", vec![0x00; 32], Some("Hello World!".to_string()));
 
         let encoded = uri.encode();
         assert!(encoded.contains("Hello%20World%21"));

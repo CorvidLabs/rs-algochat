@@ -192,7 +192,10 @@ mod tests {
         data[0] = PSK_VERSION;
         data[1] = 0x01;
         let result = decode_psk_envelope(&data);
-        assert!(matches!(result, Err(AlgoChatError::UnknownProtocolId(0x01))));
+        assert!(matches!(
+            result,
+            Err(AlgoChatError::UnknownProtocolId(0x01))
+        ));
     }
 
     #[test]
