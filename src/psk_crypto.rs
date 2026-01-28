@@ -192,10 +192,9 @@ fn decrypt_psk_as_sender(
     )?;
 
     // Decrypt the symmetric key
-    let sender_cipher =
-        ChaCha20Poly1305::new_from_slice(&sender_decryption_key).map_err(|e| {
-            AlgoChatError::DecryptionError(format!("PSK sender cipher init failed: {}", e))
-        })?;
+    let sender_cipher = ChaCha20Poly1305::new_from_slice(&sender_decryption_key).map_err(|e| {
+        AlgoChatError::DecryptionError(format!("PSK sender cipher init failed: {}", e))
+    })?;
     let nonce = Nonce::from_slice(&envelope.nonce);
 
     let symmetric_key = sender_cipher
@@ -221,10 +220,8 @@ mod tests {
     use super::*;
     use crate::keys::derive_keys_from_seed;
 
-    const ALICE_SEED_HEX: &str =
-        "0000000000000000000000000000000000000000000000000000000000000001";
-    const BOB_SEED_HEX: &str =
-        "0000000000000000000000000000000000000000000000000000000000000002";
+    const ALICE_SEED_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+    const BOB_SEED_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000002";
 
     fn alice_keys() -> (StaticSecret, PublicKey) {
         let seed = hex::decode(ALICE_SEED_HEX).unwrap();
@@ -268,7 +265,8 @@ mod tests {
             encrypt_psk_message(message, &alice_private, &alice_public, &bob_public, &psk, 0)
                 .unwrap();
 
-        let decrypted = decrypt_psk_message(&envelope, &alice_private, &alice_public, &psk).unwrap();
+        let decrypted =
+            decrypt_psk_message(&envelope, &alice_private, &alice_public, &psk).unwrap();
         assert_eq!(decrypted, message);
     }
 
@@ -293,7 +291,8 @@ mod tests {
 
             assert_eq!(envelope.ratchet_counter, counter);
 
-            let decrypted = decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk).unwrap();
+            let decrypted =
+                decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk).unwrap();
             assert_eq!(decrypted, message);
         }
     }
