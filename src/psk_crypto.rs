@@ -30,7 +30,7 @@ use crate::types::{AlgoChatError, Result, NONCE_SIZE};
 /// A PSKEnvelope containing the encrypted message
 pub fn encrypt_psk_message(
     plaintext: &str,
-    sender_private_key: &StaticSecret,
+    _sender_private_key: &StaticSecret,
     sender_public_key: &PublicKey,
     recipient_public_key: &PublicKey,
     initial_psk: &[u8],
