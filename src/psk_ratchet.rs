@@ -38,10 +38,7 @@ pub fn derive_session_psk(initial_psk: &[u8], session_index: u32) -> Result<[u8;
     let mut session_psk = [0u8; 32];
     hkdf.expand(&session_index.to_be_bytes(), &mut session_psk)
         .map_err(|e| {
-            AlgoChatError::KeyDerivationFailed(format!(
-                "Session PSK derivation failed: {}",
-                e
-            ))
+            AlgoChatError::KeyDerivationFailed(format!("Session PSK derivation failed: {}", e))
         })?;
     Ok(session_psk)
 }
@@ -59,10 +56,7 @@ pub fn derive_position_psk(session_psk: &[u8], position: u32) -> Result<[u8; 32]
     let mut position_psk = [0u8; 32];
     hkdf.expand(&position.to_be_bytes(), &mut position_psk)
         .map_err(|e| {
-            AlgoChatError::KeyDerivationFailed(format!(
-                "Position PSK derivation failed: {}",
-                e
-            ))
+            AlgoChatError::KeyDerivationFailed(format!("Position PSK derivation failed: {}", e))
         })?;
     Ok(position_psk)
 }
@@ -122,13 +116,9 @@ pub fn derive_hybrid_symmetric_key(
     // salt = ephemeral_public_key
     let hkdf = Hkdf::<Sha256>::new(Some(ephemeral_public_key), &ikm);
     let mut symmetric_key = [0u8; 32];
-    hkdf.expand(&info, &mut symmetric_key)
-        .map_err(|e| {
-            AlgoChatError::KeyDerivationFailed(format!(
-                "Hybrid key derivation failed: {}",
-                e
-            ))
-        })?;
+    hkdf.expand(&info, &mut symmetric_key).map_err(|e| {
+        AlgoChatError::KeyDerivationFailed(format!("Hybrid key derivation failed: {}", e))
+    })?;
 
     Ok(symmetric_key)
 }
@@ -165,13 +155,9 @@ pub fn derive_sender_key(
     // salt = ephemeral_public_key
     let hkdf = Hkdf::<Sha256>::new(Some(ephemeral_public_key), &ikm);
     let mut sender_key = [0u8; 32];
-    hkdf.expand(&info, &mut sender_key)
-        .map_err(|e| {
-            AlgoChatError::KeyDerivationFailed(format!(
-                "Sender key derivation failed: {}",
-                e
-            ))
-        })?;
+    hkdf.expand(&info, &mut sender_key).map_err(|e| {
+        AlgoChatError::KeyDerivationFailed(format!("Sender key derivation failed: {}", e))
+    })?;
 
     Ok(sender_key)
 }
@@ -253,18 +239,33 @@ mod tests {
         let recipient = [0x55u8; 32];
 
         let key = derive_hybrid_symmetric_key(
-            &shared_secret, &current_psk, &ephemeral, &sender, &recipient,
-        ).unwrap();
+            &shared_secret,
+            &current_psk,
+            &ephemeral,
+            &sender,
+            &recipient,
+        )
+        .unwrap();
 
         let key2 = derive_hybrid_symmetric_key(
-            &shared_secret, &current_psk, &ephemeral, &sender, &recipient,
-        ).unwrap();
+            &shared_secret,
+            &current_psk,
+            &ephemeral,
+            &sender,
+            &recipient,
+        )
+        .unwrap();
         assert_eq!(key, key2);
 
         let different_psk = [0x99u8; 32];
         let key3 = derive_hybrid_symmetric_key(
-            &shared_secret, &different_psk, &ephemeral, &sender, &recipient,
-        ).unwrap();
+            &shared_secret,
+            &different_psk,
+            &ephemeral,
+            &sender,
+            &recipient,
+        )
+        .unwrap();
         assert_ne!(key, key3);
     }
 
