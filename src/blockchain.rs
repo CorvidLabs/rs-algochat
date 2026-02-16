@@ -204,8 +204,25 @@ pub async fn discover_encryption_key(
     Ok(None)
 }
 
+/// Decodes an Algorand address to extract the 32-byte Ed25519 public key.
+///
+/// Algorand addresses are base32-encoded (no padding) and contain:
+/// - 32 bytes: Ed25519 public key
+/// - 4 bytes: checksum (truncated SHA-512/256 of the public key)
+fn decode_algorand_address(address: &str) -> Option<[u8; 32]> {
+    let decoded = data_encoding::BASE32_NOPAD
+        .decode(address.as_bytes())
+        .ok()?;
+    if decoded.len() != 36 {
+        return None;
+    }
+    let mut ed25519_public_key = [0u8; 32];
+    ed25519_public_key.copy_from_slice(&decoded[..32]);
+    Some(ed25519_public_key)
+}
+
 /// Parses a key announcement from a transaction note.
-fn parse_key_announcement(note: &[u8], _address: &str) -> Option<DiscoveredKey> {
+fn parse_key_announcement(note: &[u8], address: &str) -> Option<DiscoveredKey> {
     // Key announcement format:
     // - 32 bytes: X25519 public key
     // - 64 bytes (optional): Ed25519 signature
@@ -218,10 +235,15 @@ fn parse_key_announcement(note: &[u8], _address: &str) -> Option<DiscoveredKey> 
     public_key.copy_from_slice(&note[..32]);
 
     let is_verified = if note.len() >= 96 {
-        // Has signature, verify it
+        // Has signature, verify it using the Ed25519 public key from the Algorand address
         let signature = &note[32..96];
-        crate::signature::verify_encryption_key_bytes(&public_key, &public_key, signature)
-            .unwrap_or(false)
+        match decode_algorand_address(address) {
+            Some(ed25519_key) => {
+                crate::signature::verify_encryption_key_bytes(&public_key, &ed25519_key, signature)
+                    .unwrap_or(false)
+            }
+            None => false,
+        }
     } else {
         false
     };

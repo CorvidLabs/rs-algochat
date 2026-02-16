@@ -123,9 +123,13 @@ where
             .store(&private_key_bytes, address, false)
             .await?;
 
+        // Derive the Ed25519 public key from the seed
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(seed);
+        let ed25519_public_key = signing_key.verifying_key().to_bytes();
+
         Ok(Self {
             address: address.to_string(),
-            ed25519_public_key: *seed, // The seed is also the Ed25519 public key in Algorand
+            ed25519_public_key,
             encryption_private_key,
             encryption_public_key,
             config,
