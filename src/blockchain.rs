@@ -210,7 +210,9 @@ pub async fn discover_encryption_key(
 /// - 32 bytes: Ed25519 public key
 /// - 4 bytes: checksum (truncated SHA-512/256 of the public key)
 fn decode_algorand_address(address: &str) -> Option<[u8; 32]> {
-    let decoded = data_encoding::BASE32_NOPAD.decode(address.as_bytes()).ok()?;
+    let decoded = data_encoding::BASE32_NOPAD
+        .decode(address.as_bytes())
+        .ok()?;
     if decoded.len() != 36 {
         return None;
     }
