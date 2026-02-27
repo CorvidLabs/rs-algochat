@@ -119,8 +119,9 @@ fn url_decode(s: &str) -> Result<String> {
     while let Some(c) = chars.next() {
         if c == '%' {
             let hex: String = chars.by_ref().take(2).collect();
-            let byte = u8::from_str_radix(&hex, 16)
-                .map_err(|_| AlgoChatError::InvalidEnvelope("Invalid percent-encoding".to_string()))?;
+            let byte = u8::from_str_radix(&hex, 16).map_err(|_| {
+                AlgoChatError::InvalidEnvelope("Invalid percent-encoding".to_string())
+            })?;
             bytes.push(byte);
         } else if c == '+' {
             bytes.push(b' ');
@@ -128,8 +129,9 @@ fn url_decode(s: &str) -> Result<String> {
             bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
         }
     }
-    String::from_utf8(bytes)
-        .map_err(|_| AlgoChatError::InvalidEnvelope("Invalid UTF-8 in URL-decoded value".to_string()))
+    String::from_utf8(bytes).map_err(|_| {
+        AlgoChatError::InvalidEnvelope("Invalid UTF-8 in URL-decoded value".to_string())
+    })
 }
 
 #[cfg(test)]
