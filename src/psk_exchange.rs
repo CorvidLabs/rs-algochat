@@ -87,7 +87,7 @@ impl PSKExchangeURI {
             .decode(psk_encoded)
             .map_err(|e| AlgoChatError::InvalidEnvelope(format!("Invalid base64url PSK: {}", e)))?;
 
-        let label = params.get("label").map(|l| url_decode(l));
+        let label = params.get("label").map(|l| url_decode(l)).transpose()?;
 
         Ok(Self {
             address,
@@ -99,32 +99,37 @@ impl PSKExchangeURI {
 
 /// Simple URL encoding for label values.
 fn url_encode(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ' ' => "%20".to_string(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+    let mut result = String::new();
+    for byte in s.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(*byte as char);
+            }
+            b' ' => result.push_str("%20"),
+            _ => result.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    result
 }
 
 /// Simple URL decoding for label values.
-fn url_decode(s: &str) -> String {
-    let mut result = String::new();
+fn url_decode(s: &str) -> Result<String> {
+    let mut bytes = Vec::new();
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
         if c == '%' {
             let hex: String = chars.by_ref().take(2).collect();
-            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                result.push(byte as char);
-            }
+            let byte = u8::from_str_radix(&hex, 16)
+                .map_err(|_| AlgoChatError::InvalidEnvelope("Invalid percent-encoding".to_string()))?;
+            bytes.push(byte);
         } else if c == '+' {
-            result.push(' ');
+            bytes.push(b' ');
         } else {
-            result.push(c);
+            bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
         }
     }
-    result
+    String::from_utf8(bytes)
+        .map_err(|_| AlgoChatError::InvalidEnvelope("Invalid UTF-8 in URL-decoded value".to_string()))
 }
 
 #[cfg(test)]
@@ -202,5 +207,57 @@ mod tests {
 
         let decoded = PSKExchangeURI::parse(&encoded).unwrap();
         assert_eq!(decoded.label, Some("Hello World!".to_string()));
+    }
+
+    #[test]
+    fn test_url_encode_decode_two_byte_utf8() {
+        // "café" contains é which is U+00E9 = 2-byte UTF-8 sequence [0xC3, 0xA9]
+        let label = "café";
+        let encoded = url_encode(label);
+        assert!(encoded.contains("caf%C3%A9"), "encoded was: {}", encoded);
+        let decoded = url_decode(&encoded).unwrap();
+        assert_eq!(decoded, label);
+    }
+
+    #[test]
+    fn test_url_encode_decode_three_byte_utf8() {
+        // "こんにちは" — each character is a 3-byte UTF-8 sequence
+        let label = "こんにちは";
+        let encoded = url_encode(label);
+        let decoded = url_decode(&encoded).unwrap();
+        assert_eq!(decoded, label);
+    }
+
+    #[test]
+    fn test_url_encode_decode_four_byte_utf8() {
+        // Emoji — 4-byte UTF-8 sequence
+        let label = "🔑 key";
+        let encoded = url_encode(label);
+        let decoded = url_decode(&encoded).unwrap();
+        assert_eq!(decoded, label);
+    }
+
+    #[test]
+    fn test_roundtrip_non_ascii_label() {
+        let psk = vec![0xCC; 32];
+        let uri = PSKExchangeURI::new("ADDR", psk.clone(), Some("café 🔑".to_string()));
+
+        let encoded = uri.encode();
+        let decoded = PSKExchangeURI::parse(&encoded).unwrap();
+        assert_eq!(decoded.label, Some("café 🔑".to_string()));
+        assert_eq!(decoded.psk, psk);
+    }
+
+    #[test]
+    fn test_url_decode_invalid_utf8() {
+        // 0xFF is not valid UTF-8 on its own
+        let result = url_decode("%FF");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_url_decode_invalid_hex() {
+        let result = url_decode("%ZZ");
+        assert!(result.is_err());
     }
 }
