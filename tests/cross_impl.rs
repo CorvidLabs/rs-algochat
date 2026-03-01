@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-const ALICE_SEED_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+/// Alice's seed is available for future cross-implementation tests (e.g. verifying Alice's sent messages).
+const _ALICE_SEED_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000001";
 const BOB_SEED_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000002";
 
 fn test_messages() -> HashMap<&'static str, &'static str> {

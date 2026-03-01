@@ -634,4 +634,369 @@ mod tests {
         assert_ne!(id1, id2);
         assert_eq!(id1.len(), 36); // Standard UUID format
     }
+
+    #[test]
+    fn test_conversation_merge() {
+        let mut conv = Conversation::new("alice");
+
+        let msg1 = Message::new(
+            "tx1",
+            "sender",
+            "alice",
+            "First",
+            UNIX_EPOCH + Duration::from_secs(100),
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+        let msg2 = Message::new(
+            "tx2",
+            "alice",
+            "sender",
+            "Second",
+            UNIX_EPOCH + Duration::from_secs(200),
+            200,
+            MessageDirection::Received,
+            None,
+        );
+
+        conv.merge(vec![msg1, msg2]);
+        assert_eq!(conv.message_count(), 2);
+        assert_eq!(conv.messages()[0].id, "tx1");
+        assert_eq!(conv.messages()[1].id, "tx2");
+    }
+
+    #[test]
+    fn test_conversation_merge_dedup() {
+        let mut conv = Conversation::new("alice");
+
+        let msg = Message::new(
+            "tx1",
+            "sender",
+            "alice",
+            "Hello",
+            SystemTime::now(),
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+
+        conv.append(msg.clone());
+        conv.merge(vec![msg]);
+        assert_eq!(conv.message_count(), 1);
+    }
+
+    #[test]
+    fn test_conversation_last_received_sent() {
+        let mut conv = Conversation::new("alice");
+
+        let sent = Message::new(
+            "tx1",
+            "me",
+            "alice",
+            "Hi",
+            UNIX_EPOCH + Duration::from_secs(100),
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+        let received = Message::new(
+            "tx2",
+            "alice",
+            "me",
+            "Hello",
+            UNIX_EPOCH + Duration::from_secs(200),
+            200,
+            MessageDirection::Received,
+            None,
+        );
+
+        conv.merge(vec![sent, received]);
+
+        assert_eq!(conv.last_sent().unwrap().id, "tx1");
+        assert_eq!(conv.last_received().unwrap().id, "tx2");
+        assert_eq!(conv.last_message().unwrap().id, "tx2");
+    }
+
+    #[test]
+    fn test_conversation_empty_accessors() {
+        let conv = Conversation::new("alice");
+        assert!(conv.last_message().is_none());
+        assert!(conv.last_received().is_none());
+        assert!(conv.last_sent().is_none());
+        assert_eq!(conv.received_messages().count(), 0);
+        assert_eq!(conv.sent_messages().count(), 0);
+    }
+
+    #[test]
+    fn test_conversation_with_key() {
+        let key = [42u8; 32];
+        let conv = Conversation::with_key("alice", key);
+        assert_eq!(conv.participant_encryption_key, Some(key));
+        assert_eq!(conv.id(), "alice");
+    }
+
+    #[test]
+    fn test_conversation_filtering() {
+        let mut conv = Conversation::new("alice");
+
+        conv.append(Message::new(
+            "tx1",
+            "me",
+            "alice",
+            "sent1",
+            UNIX_EPOCH + Duration::from_secs(100),
+            100,
+            MessageDirection::Sent,
+            None,
+        ));
+        conv.append(Message::new(
+            "tx2",
+            "alice",
+            "me",
+            "recv1",
+            UNIX_EPOCH + Duration::from_secs(200),
+            200,
+            MessageDirection::Received,
+            None,
+        ));
+        conv.append(Message::new(
+            "tx3",
+            "me",
+            "alice",
+            "sent2",
+            UNIX_EPOCH + Duration::from_secs(300),
+            300,
+            MessageDirection::Sent,
+            None,
+        ));
+
+        assert_eq!(conv.sent_messages().count(), 2);
+        assert_eq!(conv.received_messages().count(), 1);
+    }
+
+    #[test]
+    fn test_message_is_reply() {
+        let msg_no_reply = Message::new(
+            "tx1",
+            "sender",
+            "recipient",
+            "Hello",
+            SystemTime::now(),
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+        assert!(!msg_no_reply.is_reply());
+
+        let msg_with_reply = Message::new(
+            "tx2",
+            "sender",
+            "recipient",
+            "Reply",
+            SystemTime::now(),
+            101,
+            MessageDirection::Sent,
+            Some(ReplyContext::new("tx1", "Hello")),
+        );
+        assert!(msg_with_reply.is_reply());
+    }
+
+    #[test]
+    fn test_message_unix_timestamp() {
+        let timestamp = UNIX_EPOCH + Duration::from_secs(1234567890);
+        let msg = Message::new(
+            "tx1",
+            "sender",
+            "recipient",
+            "Hello",
+            timestamp,
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+        assert_eq!(msg.unix_timestamp(), 1234567890);
+    }
+
+    #[test]
+    fn test_message_hash_by_id() {
+        use std::collections::HashMap;
+        // Hash is based on id only, so messages with the same id hash equally
+        let msg1 = Message::new(
+            "tx1",
+            "s",
+            "r",
+            "a",
+            SystemTime::now(),
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+        let msg2 = Message::new(
+            "tx2",
+            "s",
+            "r",
+            "b",
+            SystemTime::now(),
+            200,
+            MessageDirection::Sent,
+            None,
+        );
+
+        let mut map = HashMap::new();
+        map.insert(msg1.id.clone(), &msg1);
+        map.insert(msg2.id.clone(), &msg2);
+        assert_eq!(map.len(), 2);
+
+        // Verify hash consistency: same id => same hash
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        msg1.hash(&mut h1);
+        let msg1_same_id = Message::new(
+            "tx1",
+            "other",
+            "other",
+            "different",
+            SystemTime::now(),
+            999,
+            MessageDirection::Received,
+            None,
+        );
+        msg1_same_id.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn test_discovered_key() {
+        let key = DiscoveredKey::new([42u8; 32], true);
+        assert!(key.is_verified);
+        assert_eq!(key.public_key, [42u8; 32]);
+
+        let unverified = DiscoveredKey::new([0u8; 32], false);
+        assert!(!unverified.is_verified);
+    }
+
+    #[test]
+    fn test_send_options_replying_to() {
+        let msg = Message::new(
+            "tx1",
+            "sender",
+            "recipient",
+            "Original message content",
+            SystemTime::now(),
+            100,
+            MessageDirection::Received,
+            None,
+        );
+
+        let opts = SendOptions::replying_to(&msg);
+        assert!(opts.reply_context.is_some());
+        let ctx = opts.reply_context.unwrap();
+        assert_eq!(ctx.message_id, "tx1");
+    }
+
+    #[test]
+    fn test_send_options_with_reply() {
+        let ctx = ReplyContext::new("tx1", "Preview");
+        let opts = SendOptions::fire_and_forget().with_reply(ctx);
+        assert!(opts.reply_context.is_some());
+        assert!(!opts.wait_for_confirmation);
+    }
+
+    #[test]
+    fn test_send_result() {
+        let msg = Message::new(
+            "tx1",
+            "sender",
+            "recipient",
+            "Hello",
+            SystemTime::now(),
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+        let result = SendResult::new("TXID123", msg);
+        assert_eq!(result.txid, "TXID123");
+        assert_eq!(result.message.id, "tx1");
+    }
+
+    #[test]
+    fn test_chat_account_from_seed() {
+        let seed = [1u8; 32];
+        let ed25519_key = [2u8; 32];
+        let account = ChatAccount::from_seed("TESTADDR", &seed, ed25519_key).unwrap();
+        assert_eq!(account.address, "TESTADDR");
+        assert_eq!(account.ed25519_public_key, ed25519_key);
+        // Public key should be deterministic from seed
+        let pk1 = account.public_key_bytes();
+        let account2 = ChatAccount::from_seed("TESTADDR", &seed, ed25519_key).unwrap();
+        assert_eq!(pk1, account2.public_key_bytes());
+    }
+
+    #[test]
+    fn test_chat_account_from_raw_keys() {
+        let ed25519_key = [1u8; 32];
+        let private_key = [2u8; 32];
+        let account = ChatAccount::from_raw_keys("ADDR", ed25519_key, private_key);
+        assert_eq!(account.address, "ADDR");
+        assert_eq!(account.private_key_bytes(), private_key);
+    }
+
+    #[test]
+    fn test_chat_account_from_algorand_account() {
+        let mut secret_key = [0u8; 64];
+        secret_key[..32].copy_from_slice(&[1u8; 32]); // seed
+        secret_key[32..].copy_from_slice(&[2u8; 32]); // ed25519 pubkey
+        let account = ChatAccount::from_algorand_account("ADDR", &secret_key).unwrap();
+        assert_eq!(account.address, "ADDR");
+        assert_eq!(account.ed25519_public_key, [2u8; 32]);
+    }
+
+    #[test]
+    fn test_chat_account_display_debug() {
+        let account = ChatAccount::from_raw_keys("TESTADDR", [0u8; 32], [0u8; 32]);
+        let display = format!("{}", account);
+        assert!(display.contains("TESTADDR"));
+        let debug = format!("{:?}", account);
+        assert!(debug.contains("ChatAccount"));
+        assert!(debug.contains("TESTADDR"));
+    }
+
+    #[test]
+    fn test_pending_message_can_retry() {
+        let mut msg = PendingMessage::new("r", "content", None);
+
+        // Not failed, can't retry
+        assert!(!msg.can_retry(3));
+
+        msg.mark_sending();
+        msg.mark_failed("err");
+        assert!(msg.can_retry(3));
+
+        msg.mark_sending();
+        msg.mark_failed("err");
+        msg.mark_sending();
+        msg.mark_failed("err");
+        // retry_count is now 3, max_retries is 3
+        assert!(!msg.can_retry(3));
+    }
+
+    #[test]
+    fn test_reply_context_short_message() {
+        let msg = Message::new(
+            "tx1",
+            "s",
+            "r",
+            "Hi",
+            SystemTime::now(),
+            100,
+            MessageDirection::Sent,
+            None,
+        );
+
+        let ctx = ReplyContext::from_message(&msg, 100);
+        assert_eq!(ctx.preview, "Hi"); // Not truncated
+        assert!(!ctx.preview.ends_with("..."));
+    }
 }
