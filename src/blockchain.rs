@@ -276,4 +276,111 @@ mod tests {
         let config = AlgorandConfig::mainnet();
         assert!(config.algod_url.contains("mainnet"));
     }
+
+    #[test]
+    fn test_config_with_indexer() {
+        let config = AlgorandConfig::new("http://localhost:4001", "token123")
+            .with_indexer("http://localhost:8980", "idx-token");
+        assert_eq!(config.algod_url, "http://localhost:4001");
+        assert_eq!(config.algod_token, "token123");
+        assert_eq!(
+            config.indexer_url,
+            Some("http://localhost:8980".to_string())
+        );
+        assert_eq!(config.indexer_token, Some("idx-token".to_string()));
+    }
+
+    #[test]
+    fn test_decode_algorand_address_valid() {
+        // A valid Algorand address (base32-encoded, 58 chars, 36 bytes decoded)
+        // Generate one: 32 bytes pubkey + 4 bytes checksum
+        let pubkey = [0u8; 32];
+        use sha2::Digest;
+        let hash = sha2::Sha512_256::digest(pubkey);
+        let checksum = &hash[hash.len() - 4..];
+        let mut full = Vec::with_capacity(36);
+        full.extend_from_slice(&pubkey);
+        full.extend_from_slice(checksum);
+        let address = data_encoding::BASE32_NOPAD.encode(&full);
+
+        let decoded = decode_algorand_address(&address);
+        assert!(decoded.is_some());
+        assert_eq!(decoded.unwrap(), pubkey);
+    }
+
+    #[test]
+    fn test_decode_algorand_address_too_short() {
+        let result = decode_algorand_address("AAAA");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_decode_algorand_address_invalid_base32() {
+        let result = decode_algorand_address("not-valid-base32!!!");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_key_announcement_too_short() {
+        let note = [0u8; 16]; // Less than 32 bytes
+        let result = parse_key_announcement(&note, "SOMEADDR");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_key_announcement_valid_unsigned() {
+        let mut note = [0u8; 32];
+        note[0] = 0x42; // Some key data
+        let result = parse_key_announcement(&note, "SOMEADDR");
+        assert!(result.is_some());
+        let key = result.unwrap();
+        assert_eq!(key.public_key[0], 0x42);
+        assert!(!key.is_verified); // No signature, so not verified
+    }
+
+    #[test]
+    fn test_parse_key_announcement_with_bad_signature() {
+        // 32 bytes key + 64 bytes bad signature = 96 bytes
+        let note = [0u8; 96];
+        // Use a valid-looking address (we'll use zeros which decode to a valid key)
+        let pubkey = [0u8; 32];
+        use sha2::Digest;
+        let hash = sha2::Sha512_256::digest(pubkey);
+        let checksum = &hash[hash.len() - 4..];
+        let mut full = Vec::with_capacity(36);
+        full.extend_from_slice(&pubkey);
+        full.extend_from_slice(checksum);
+        let address = data_encoding::BASE32_NOPAD.encode(&full);
+
+        let result = parse_key_announcement(&note, &address);
+        assert!(result.is_some());
+        let key = result.unwrap();
+        // Bad signature should result in unverified
+        assert!(!key.is_verified);
+    }
+
+    #[test]
+    fn test_transaction_info_debug() {
+        let info = TransactionInfo {
+            txid: "TXID123".to_string(),
+            confirmed_round: Some(1000),
+        };
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("TXID123"));
+    }
+
+    #[test]
+    fn test_note_transaction_clone() {
+        let tx = NoteTransaction {
+            txid: "TX1".to_string(),
+            sender: "SENDER".to_string(),
+            receiver: "RECEIVER".to_string(),
+            note: vec![1, 2, 3],
+            confirmed_round: 100,
+            round_time: 1234567890,
+        };
+        let cloned = tx.clone();
+        assert_eq!(cloned.txid, tx.txid);
+        assert_eq!(cloned.note, tx.note);
+    }
 }

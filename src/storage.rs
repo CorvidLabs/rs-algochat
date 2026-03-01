@@ -305,6 +305,7 @@ impl EncryptionKeyStorage for InMemoryKeyStorage {
 pub struct FileKeyStorage {
     password: Arc<RwLock<Option<String>>>,
     cached_key: Arc<RwLock<Option<([u8; 32], [u8; 32])>>>, // (salt, derived_key)
+    base_directory: Option<std::path::PathBuf>,
 }
 
 impl FileKeyStorage {
@@ -317,21 +318,21 @@ impl FileKeyStorage {
     /// AES-GCM nonce size in bytes
     const NONCE_SIZE: usize = 12;
 
-    /// AES-GCM tag size in bytes (used in MIN_FILE_SIZE calculation)
-    #[allow(dead_code)]
+    /// AES-GCM tag size in bytes
     const TAG_SIZE: usize = 16;
 
     /// Directory name for key storage
     const DIRECTORY_NAME: &'static str = ".algochat/keys";
 
-    /// Minimum file size
-    const MIN_FILE_SIZE: usize = 32 + 12 + 32 + 16;
+    /// Minimum file size (salt + nonce + key + tag)
+    const MIN_FILE_SIZE: usize = Self::SALT_SIZE + Self::NONCE_SIZE + 32 + Self::TAG_SIZE;
 
     /// Creates a new file key storage.
     pub fn new() -> Self {
         Self {
             password: Arc::new(RwLock::new(None)),
             cached_key: Arc::new(RwLock::new(None)),
+            base_directory: None,
         }
     }
 
@@ -340,6 +341,22 @@ impl FileKeyStorage {
         Self {
             password: Arc::new(RwLock::new(Some(password.into()))),
             cached_key: Arc::new(RwLock::new(None)),
+            base_directory: None,
+        }
+    }
+
+    /// Creates a new file key storage with a custom base directory.
+    ///
+    /// This is useful for testing or when you want to store keys in a
+    /// non-default location.
+    pub fn with_directory(
+        directory: impl Into<std::path::PathBuf>,
+        password: impl Into<String>,
+    ) -> Self {
+        Self {
+            password: Arc::new(RwLock::new(Some(password.into()))),
+            cached_key: Arc::new(RwLock::new(None)),
+            base_directory: Some(directory.into()),
         }
     }
 
@@ -360,15 +377,20 @@ impl FileKeyStorage {
     }
 
     /// Gets the key storage directory path.
-    fn get_directory() -> std::path::PathBuf {
+    fn get_directory(&self) -> Result<std::path::PathBuf> {
+        if let Some(ref base) = self.base_directory {
+            return Ok(base.clone());
+        }
         dirs::home_dir()
-            .expect("Could not find home directory")
-            .join(Self::DIRECTORY_NAME)
+            .map(|d| d.join(Self::DIRECTORY_NAME))
+            .ok_or_else(|| {
+                AlgoChatError::StorageFailed("Could not find home directory".to_string())
+            })
     }
 
     /// Ensures the key storage directory exists.
-    fn ensure_directory() -> Result<std::path::PathBuf> {
-        let directory = Self::get_directory();
+    fn ensure_directory(&self) -> Result<std::path::PathBuf> {
+        let directory = self.get_directory()?;
         if !directory.exists() {
             std::fs::create_dir_all(&directory).map_err(|e| {
                 AlgoChatError::StorageFailed(format!("Failed to create directory: {}", e))
@@ -460,7 +482,7 @@ impl EncryptionKeyStorage for FileKeyStorage {
         };
 
         // Ensure directory exists
-        let directory = Self::ensure_directory()?;
+        let directory = self.ensure_directory()?;
 
         // Generate random salt and nonce (use OsRng which is Send)
         use rand::RngCore;
@@ -509,7 +531,7 @@ impl EncryptionKeyStorage for FileKeyStorage {
             })?
         };
 
-        let directory = Self::get_directory();
+        let directory = self.get_directory()?;
         let file_path = Self::key_file_path(address, &directory);
 
         // Check if file exists
@@ -559,13 +581,15 @@ impl EncryptionKeyStorage for FileKeyStorage {
     }
 
     async fn has_key(&self, address: &str) -> bool {
-        let directory = Self::get_directory();
+        let Ok(directory) = self.get_directory() else {
+            return false;
+        };
         let file_path = Self::key_file_path(address, &directory);
         file_path.exists()
     }
 
     async fn delete(&self, address: &str) -> Result<()> {
-        let directory = Self::get_directory();
+        let directory = self.get_directory()?;
         let file_path = Self::key_file_path(address, &directory);
 
         if file_path.exists() {
@@ -578,7 +602,7 @@ impl EncryptionKeyStorage for FileKeyStorage {
     }
 
     async fn list_stored_addresses(&self) -> Result<Vec<String>> {
-        let directory = Self::get_directory();
+        let directory = self.get_directory()?;
 
         if !directory.exists() {
             return Ok(Vec::new());
@@ -672,5 +696,317 @@ mod tests {
 
         storage.delete("addr1").await.unwrap();
         assert!(!storage.has_key("addr1").await);
+    }
+
+    #[tokio::test]
+    async fn test_key_storage_list_addresses() {
+        let storage = InMemoryKeyStorage::new();
+        let key = [42u8; 32];
+
+        let addrs = storage.list_stored_addresses().await.unwrap();
+        assert!(addrs.is_empty());
+
+        storage.store(&key, "addr1", false).await.unwrap();
+        storage.store(&key, "addr2", false).await.unwrap();
+
+        let mut addrs = storage.list_stored_addresses().await.unwrap();
+        addrs.sort();
+        assert_eq!(addrs, vec!["addr1", "addr2"]);
+    }
+
+    #[tokio::test]
+    async fn test_key_storage_retrieve_missing() {
+        let storage = InMemoryKeyStorage::new();
+        let result = storage.retrieve("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_message_cache_dedup() {
+        let cache = InMemoryMessageCache::new();
+        let msg = test_message("tx1", 100);
+
+        cache.store(&[msg.clone()], "alice").await.unwrap();
+        cache.store(&[msg], "alice").await.unwrap();
+
+        let retrieved = cache.retrieve("alice", None).await.unwrap();
+        assert_eq!(retrieved.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_message_cache_clear() {
+        let cache = InMemoryMessageCache::new();
+        let messages = vec![test_message("tx1", 100)];
+
+        cache.store(&messages, "alice").await.unwrap();
+        cache.set_last_sync_round(100, "alice").await.unwrap();
+
+        cache.clear().await.unwrap();
+
+        let retrieved = cache.retrieve("alice", None).await.unwrap();
+        assert!(retrieved.is_empty());
+        assert_eq!(cache.get_last_sync_round("alice").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn test_message_cache_clear_for() {
+        let cache = InMemoryMessageCache::new();
+
+        cache
+            .store(&[test_message("tx1", 100)], "alice")
+            .await
+            .unwrap();
+        cache
+            .store(&[test_message("tx2", 200)], "bob")
+            .await
+            .unwrap();
+        cache.set_last_sync_round(100, "alice").await.unwrap();
+        cache.set_last_sync_round(200, "bob").await.unwrap();
+
+        cache.clear_for("alice").await.unwrap();
+
+        let alice = cache.retrieve("alice", None).await.unwrap();
+        assert!(alice.is_empty());
+        assert_eq!(cache.get_last_sync_round("alice").await.unwrap(), None);
+
+        let bob = cache.retrieve("bob", None).await.unwrap();
+        assert_eq!(bob.len(), 1);
+        assert_eq!(cache.get_last_sync_round("bob").await.unwrap(), Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_message_cache_get_conversations() {
+        let cache = InMemoryMessageCache::new();
+
+        cache
+            .store(&[test_message("tx1", 100)], "alice")
+            .await
+            .unwrap();
+        cache
+            .store(&[test_message("tx2", 200)], "bob")
+            .await
+            .unwrap();
+
+        let mut convs = cache.get_cached_conversations().await.unwrap();
+        convs.sort();
+        assert_eq!(convs, vec!["alice", "bob"]);
+    }
+
+    #[tokio::test]
+    async fn test_message_cache_sync_rounds() {
+        let cache = InMemoryMessageCache::new();
+
+        assert_eq!(cache.get_last_sync_round("alice").await.unwrap(), None);
+
+        cache.set_last_sync_round(500, "alice").await.unwrap();
+        assert_eq!(cache.get_last_sync_round("alice").await.unwrap(), Some(500));
+
+        cache.set_last_sync_round(600, "alice").await.unwrap();
+        assert_eq!(cache.get_last_sync_round("alice").await.unwrap(), Some(600));
+    }
+
+    #[tokio::test]
+    async fn test_public_key_cache_invalidate() {
+        let cache = PublicKeyCache::new(Duration::from_secs(3600));
+        let key = [42u8; 32];
+
+        cache.store("addr1", key).await;
+        assert!(cache.retrieve("addr1").await.is_some());
+
+        cache.invalidate("addr1").await;
+        assert!(cache.retrieve("addr1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_public_key_cache_clear() {
+        let cache = PublicKeyCache::new(Duration::from_secs(3600));
+
+        cache.store("addr1", [1u8; 32]).await;
+        cache.store("addr2", [2u8; 32]).await;
+
+        cache.clear().await;
+
+        assert!(cache.retrieve("addr1").await.is_none());
+        assert!(cache.retrieve("addr2").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_public_key_cache_prune_expired() {
+        let cache = PublicKeyCache::new(Duration::from_millis(50));
+
+        cache.store("addr1", [1u8; 32]).await;
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        cache.store("addr2", [2u8; 32]).await;
+
+        cache.prune_expired().await;
+
+        assert!(cache.retrieve("addr1").await.is_none());
+        assert!(cache.retrieve("addr2").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_public_key_cache_default_ttl() {
+        let cache = PublicKeyCache::default();
+        let key = [42u8; 32];
+
+        cache.store("addr1", key).await;
+        let retrieved = cache.retrieve("addr1").await;
+        assert_eq!(retrieved, Some(key));
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password-123");
+        let key = [42u8; 32];
+
+        assert!(!storage.has_key("TESTADDR1").await);
+
+        storage.store(&key, "TESTADDR1", false).await.unwrap();
+        assert!(storage.has_key("TESTADDR1").await);
+
+        let retrieved = storage.retrieve("TESTADDR1").await.unwrap();
+        assert_eq!(retrieved, key);
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password-123");
+        let key = [42u8; 32];
+
+        storage.store(&key, "TESTADDR1", false).await.unwrap();
+        assert!(storage.has_key("TESTADDR1").await);
+
+        storage.delete("TESTADDR1").await.unwrap();
+        assert!(!storage.has_key("TESTADDR1").await);
+
+        // Deleting non-existent key should not error
+        storage.delete("TESTADDR1").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_list_addresses() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password-123");
+
+        storage.store(&[1u8; 32], "ADDR_A", false).await.unwrap();
+        storage.store(&[2u8; 32], "ADDR_B", false).await.unwrap();
+
+        let mut addrs = storage.list_stored_addresses().await.unwrap();
+        addrs.sort();
+        assert_eq!(addrs, vec!["ADDR_A", "ADDR_B"]);
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_wrong_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "correct-password");
+        let key = [42u8; 32];
+
+        storage.store(&key, "TESTADDR1", false).await.unwrap();
+
+        // Try to retrieve with wrong password
+        let wrong_storage = FileKeyStorage::with_directory(dir.path(), "wrong-password");
+        let result = wrong_storage.retrieve("TESTADDR1").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_no_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage {
+            password: Arc::new(RwLock::new(None)),
+            cached_key: Arc::new(RwLock::new(None)),
+            base_directory: Some(dir.path().to_path_buf()),
+        };
+
+        let result = storage.store(&[42u8; 32], "TESTADDR1", false).await;
+        assert!(result.is_err());
+
+        let result = storage.retrieve("TESTADDR1").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_set_clear_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "initial-password");
+        let key = [42u8; 32];
+
+        storage.store(&key, "TESTADDR1", false).await.unwrap();
+
+        // Clear password, should fail
+        storage.clear_password().await;
+        let result = storage.retrieve("TESTADDR1").await;
+        assert!(result.is_err());
+
+        // Set correct password, should succeed
+        storage.set_password("initial-password").await;
+        let retrieved = storage.retrieve("TESTADDR1").await.unwrap();
+        assert_eq!(retrieved, key);
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_retrieve_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password");
+
+        let result = storage.retrieve("NONEXISTENT").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password");
+
+        storage.store(&[1u8; 32], "TESTADDR1", false).await.unwrap();
+        storage.store(&[2u8; 32], "TESTADDR1", false).await.unwrap();
+
+        let retrieved = storage.retrieve("TESTADDR1").await.unwrap();
+        assert_eq!(retrieved, [2u8; 32]);
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_corrupt_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password");
+
+        // Write truncated data directly to the file
+        let file_path = dir.path().join("CORRUPT.key");
+        std::fs::write(&file_path, &[0u8; 10]).unwrap();
+
+        let result = storage.retrieve("CORRUPT").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_list_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password");
+
+        let addrs = storage.list_stored_addresses().await.unwrap();
+        assert!(addrs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_file_key_storage_multiple_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FileKeyStorage::with_directory(dir.path(), "test-password");
+
+        // Store multiple keys with different values
+        for i in 0u8..5 {
+            let key = [i; 32];
+            let addr = format!("ADDR{}", i);
+            storage.store(&key, &addr, false).await.unwrap();
+        }
+
+        // Verify each key
+        for i in 0u8..5 {
+            let addr = format!("ADDR{}", i);
+            let retrieved = storage.retrieve(&addr).await.unwrap();
+            assert_eq!(retrieved, [i; 32]);
+        }
     }
 }

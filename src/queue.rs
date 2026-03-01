@@ -309,4 +309,200 @@ mod tests {
         let ready = queue.ready_for_retry().await;
         assert_eq!(ready.len(), 1);
     }
+
+    #[tokio::test]
+    async fn test_queue_full() {
+        let queue = SendQueue::new(QueueConfig {
+            max_retries: 3,
+            retry_delay: Duration::from_secs(1),
+            max_queue_size: 2,
+        });
+
+        queue.enqueue(test_message("1", "r1")).await.unwrap();
+        queue.enqueue(test_message("2", "r2")).await.unwrap();
+
+        // Third enqueue should fail — queue is full
+        let result = queue.enqueue(test_message("3", "r3")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_queue_remove() {
+        let queue = SendQueue::with_defaults();
+        let msg = test_message("1", "recipient1");
+        let id = msg.id.clone();
+
+        queue.enqueue(msg).await.unwrap();
+        assert_eq!(queue.len().await, 1);
+
+        let removed = queue.remove(&id).await;
+        assert!(removed.is_some());
+        assert!(queue.is_empty().await);
+
+        // Remove non-existent
+        let removed = queue.remove("nonexistent").await;
+        assert!(removed.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_queue_prune_failed() {
+        let queue = SendQueue::new(QueueConfig {
+            max_retries: 1,
+            retry_delay: Duration::from_millis(1),
+            max_queue_size: 100,
+        });
+
+        let msg = test_message("1", "r1");
+        let id = msg.id.clone();
+
+        queue.enqueue(msg).await.unwrap();
+        queue.mark_sending(&id).await.unwrap();
+        queue.mark_failed(&id, "error").await.unwrap();
+
+        assert_eq!(queue.len().await, 1);
+        // Message has 1 retry, max_retries is 1, so can_retry is false
+        queue.prune_failed().await;
+        assert!(queue.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_queue_clear() {
+        let queue = SendQueue::with_defaults();
+        queue.enqueue(test_message("1", "r1")).await.unwrap();
+        queue.enqueue(test_message("2", "r2")).await.unwrap();
+
+        assert_eq!(queue.len().await, 2);
+        queue.clear().await;
+        assert!(queue.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_queue_messages_for_recipient() {
+        let queue = SendQueue::with_defaults();
+        queue.enqueue(test_message("1", "alice")).await.unwrap();
+        queue.enqueue(test_message("2", "bob")).await.unwrap();
+        queue.enqueue(test_message("3", "alice")).await.unwrap();
+
+        let alice_msgs = queue.messages_for("alice").await;
+        assert_eq!(alice_msgs.len(), 2);
+
+        let bob_msgs = queue.messages_for("bob").await;
+        assert_eq!(bob_msgs.len(), 1);
+
+        let charlie_msgs = queue.messages_for("charlie").await;
+        assert!(charlie_msgs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_queue_all_pending() {
+        let queue = SendQueue::with_defaults();
+        let msg1 = test_message("1", "r1");
+        let id1 = msg1.id.clone();
+
+        queue.enqueue(msg1).await.unwrap();
+        queue.enqueue(test_message("2", "r2")).await.unwrap();
+
+        // Mark first as sending
+        queue.mark_sending(&id1).await.unwrap();
+
+        let pending = queue.all_pending().await;
+        assert_eq!(pending.len(), 1); // Only the second message
+    }
+
+    #[tokio::test]
+    async fn test_queue_reset_for_retry() {
+        let queue = SendQueue::new(QueueConfig {
+            max_retries: 3,
+            retry_delay: Duration::from_millis(1),
+            max_queue_size: 100,
+        });
+
+        let msg = test_message("1", "r1");
+        let id = msg.id.clone();
+
+        queue.enqueue(msg).await.unwrap();
+        queue.mark_sending(&id).await.unwrap();
+        queue.mark_failed(&id, "temporary error").await.unwrap();
+
+        // Reset for retry
+        queue.reset_for_retry(&id).await.unwrap();
+
+        let pending = queue.pending_count().await;
+        assert_eq!(pending, 1);
+    }
+
+    #[tokio::test]
+    async fn test_queue_reset_for_retry_exceeded() {
+        let queue = SendQueue::new(QueueConfig {
+            max_retries: 1,
+            retry_delay: Duration::from_millis(1),
+            max_queue_size: 100,
+        });
+
+        let msg = test_message("1", "r1");
+        let id = msg.id.clone();
+
+        queue.enqueue(msg).await.unwrap();
+        queue.mark_sending(&id).await.unwrap();
+        queue.mark_failed(&id, "error").await.unwrap();
+
+        // Should fail — max retries exceeded
+        let result = queue.reset_for_retry(&id).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_queue_mark_nonexistent() {
+        let queue = SendQueue::with_defaults();
+
+        let result = queue.mark_sending("nonexistent").await;
+        assert!(result.is_err());
+
+        let result = queue.mark_sent("nonexistent").await;
+        assert!(result.is_err());
+
+        let result = queue.mark_failed("nonexistent", "error").await;
+        assert!(result.is_err());
+
+        let result = queue.reset_for_retry("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_queue_not_ready_for_retry_too_soon() {
+        let queue = SendQueue::new(QueueConfig {
+            max_retries: 3,
+            retry_delay: Duration::from_secs(3600), // 1 hour
+            max_queue_size: 100,
+        });
+
+        let msg = test_message("1", "r1");
+        let id = msg.id.clone();
+
+        queue.enqueue(msg).await.unwrap();
+        queue.mark_sending(&id).await.unwrap();
+        queue.mark_failed(&id, "error").await.unwrap();
+
+        // Should not be ready — retry_delay hasn't elapsed
+        let ready = queue.ready_for_retry().await;
+        assert!(ready.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_queue_prune_sent() {
+        let queue = SendQueue::with_defaults();
+
+        let msg1 = test_message("1", "r1");
+        let msg2 = test_message("2", "r2");
+        let id1 = msg1.id.clone();
+
+        queue.enqueue(msg1).await.unwrap();
+        queue.enqueue(msg2).await.unwrap();
+
+        queue.mark_sending(&id1).await.unwrap();
+        queue.mark_sent(&id1).await.unwrap();
+
+        queue.prune_sent().await;
+        assert_eq!(queue.len().await, 1);
+    }
 }
