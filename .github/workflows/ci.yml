@@ -13,8 +13,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        rust: [stable, beta, "1.75"]
+        rust: [stable, beta, "1.85"]
     steps:
       - uses: actions/checkout@v4
 
