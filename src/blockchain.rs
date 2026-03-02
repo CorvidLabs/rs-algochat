@@ -208,7 +208,9 @@ pub async fn discover_encryption_key(
 ///
 /// Algorand addresses are base32-encoded (no padding) and contain:
 /// - 32 bytes: Ed25519 public key
-/// - 4 bytes: checksum (truncated SHA-512/256 of the public key)
+/// - 4 bytes: checksum (last 4 bytes of SHA-512/256 of the public key)
+///
+/// Returns `None` if the address is malformed or the checksum doesn't match.
 fn decode_algorand_address(address: &str) -> Option<[u8; 32]> {
     let decoded = data_encoding::BASE32_NOPAD
         .decode(address.as_bytes())
@@ -216,8 +218,18 @@ fn decode_algorand_address(address: &str) -> Option<[u8; 32]> {
     if decoded.len() != 36 {
         return None;
     }
+    let public_key = &decoded[..32];
+    let checksum = &decoded[32..36];
+
+    // Verify checksum: last 4 bytes of SHA-512/256(public_key)
+    use sha2::Digest;
+    let hash = sha2::Sha512_256::digest(public_key);
+    if checksum != &hash[hash.len() - 4..] {
+        return None;
+    }
+
     let mut ed25519_public_key = [0u8; 32];
-    ed25519_public_key.copy_from_slice(&decoded[..32]);
+    ed25519_public_key.copy_from_slice(public_key);
     Some(ed25519_public_key)
 }
 
@@ -306,6 +318,20 @@ mod tests {
         let decoded = decode_algorand_address(&address);
         assert!(decoded.is_some());
         assert_eq!(decoded.unwrap(), pubkey);
+    }
+
+    #[test]
+    fn test_decode_algorand_address_bad_checksum() {
+        // Build an address with correct length but wrong checksum
+        let pubkey = [1u8; 32];
+        let bad_checksum = [0xFF, 0xFF, 0xFF, 0xFF];
+        let mut full = Vec::with_capacity(36);
+        full.extend_from_slice(&pubkey);
+        full.extend_from_slice(&bad_checksum);
+        let address = data_encoding::BASE32_NOPAD.encode(&full);
+
+        let result = decode_algorand_address(&address);
+        assert!(result.is_none(), "bad checksum should be rejected");
     }
 
     #[test]

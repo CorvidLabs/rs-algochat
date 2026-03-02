@@ -2,6 +2,7 @@
 name = "algochat"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 authors = ["CorvidLabs <hello@corvidlabs.com>"]
 description = "Rust implementation of the AlgoChat protocol for encrypted messaging on Algorand"
 license = "MIT"
@@ -16,7 +17,7 @@ chacha20poly1305 = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 rand = "0.8"
-thiserror = "1.0"
+thiserror = "2.0"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 async-trait = "0.1"
@@ -24,7 +25,7 @@ tokio = { version = "1.0", features = ["sync", "time", "rt"] }
 aes-gcm = "0.10"
 pbkdf2 = "0.12"
 base64 = "0.22"
-dirs = "5.0"
+dirs = "6.0"
 hex = "0.4"
 data-encoding = "2.6"
 
