@@ -11,3 +11,7 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# Environment
+.env
+.env.*
