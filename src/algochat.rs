@@ -363,7 +363,9 @@ mod tests {
 
     impl MockAlgod {
         fn new() -> Self {
-            Self { current_round: 1000 }
+            Self {
+                current_round: 1000,
+            }
         }
     }
 
@@ -463,10 +465,7 @@ mod tests {
                 .collect())
         }
 
-        async fn get_transaction(
-            &self,
-            txid: &str,
-        ) -> crate::types::Result<NoteTransaction> {
+        async fn get_transaction(&self, txid: &str) -> crate::types::Result<NoteTransaction> {
             self.transactions
                 .iter()
                 .find(|tx| tx.txid == txid)
@@ -493,12 +492,12 @@ mod tests {
     // ========================================================================
 
     const ALICE_SEED: [u8; 32] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 1,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1,
     ];
     const BOB_SEED: [u8; 32] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 2,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 2,
     ];
 
     const ALICE_ADDR: &str = "ALICE_TESTADDR";

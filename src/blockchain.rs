@@ -555,10 +555,7 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn get_transaction(
-            &self,
-            _txid: &str,
-        ) -> crate::types::Result<NoteTransaction> {
+        async fn get_transaction(&self, _txid: &str) -> crate::types::Result<NoteTransaction> {
             Err(crate::types::AlgoChatError::TransactionFailed(
                 "not found".to_string(),
             ))
