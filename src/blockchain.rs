@@ -409,4 +409,299 @@ mod tests {
         assert_eq!(cloned.txid, tx.txid);
         assert_eq!(cloned.note, tx.note);
     }
+
+    #[test]
+    fn test_parse_key_announcement_with_valid_signature() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        // Create an Ed25519 keypair
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let ed25519_pubkey = signing_key.verifying_key().to_bytes();
+
+        // Build a valid Algorand address from this Ed25519 public key
+        use sha2::Digest;
+        let hash = sha2::Sha512_256::digest(ed25519_pubkey);
+        let checksum = &hash[hash.len() - 4..];
+        let mut addr_bytes = Vec::with_capacity(36);
+        addr_bytes.extend_from_slice(&ed25519_pubkey);
+        addr_bytes.extend_from_slice(checksum);
+        let address = data_encoding::BASE32_NOPAD.encode(&addr_bytes);
+
+        // Create an X25519 encryption key and sign it
+        let encryption_key = [0xABu8; 32];
+        let signature = signing_key.sign(&encryption_key);
+
+        // Build the note: 32 bytes key + 64 bytes signature
+        let mut note = Vec::with_capacity(96);
+        note.extend_from_slice(&encryption_key);
+        note.extend_from_slice(&signature.to_bytes());
+
+        let result = parse_key_announcement(&note, &address);
+        assert!(result.is_some());
+        let key = result.unwrap();
+        assert_eq!(key.public_key, encryption_key);
+        assert!(key.is_verified, "valid signature should be verified");
+    }
+
+    #[test]
+    fn test_parse_key_announcement_wrong_signer() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        // Sign with one key but use a different key in the address
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let different_key = SigningKey::from_bytes(&[99u8; 32]);
+        let different_pubkey = different_key.verifying_key().to_bytes();
+
+        // Build address from the DIFFERENT key
+        use sha2::Digest;
+        let hash = sha2::Sha512_256::digest(different_pubkey);
+        let checksum = &hash[hash.len() - 4..];
+        let mut addr_bytes = Vec::with_capacity(36);
+        addr_bytes.extend_from_slice(&different_pubkey);
+        addr_bytes.extend_from_slice(checksum);
+        let address = data_encoding::BASE32_NOPAD.encode(&addr_bytes);
+
+        // Sign with the ORIGINAL key (mismatch)
+        let encryption_key = [0xABu8; 32];
+        let signature = signing_key.sign(&encryption_key);
+
+        let mut note = Vec::with_capacity(96);
+        note.extend_from_slice(&encryption_key);
+        note.extend_from_slice(&signature.to_bytes());
+
+        let result = parse_key_announcement(&note, &address);
+        assert!(result.is_some());
+        let key = result.unwrap();
+        assert!(!key.is_verified, "wrong signer should not verify");
+    }
+
+    #[test]
+    fn test_parse_key_announcement_exactly_32_bytes() {
+        // Exactly 32 bytes (no signature)
+        let note = [0x42u8; 32];
+        let result = parse_key_announcement(&note, "SOMEADDR");
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_verified);
+    }
+
+    #[test]
+    fn test_parse_key_announcement_between_32_and_96_bytes() {
+        // Between 32 and 96 bytes (partial, no valid signature)
+        let note = [0x42u8; 64];
+        let result = parse_key_announcement(&note, "SOMEADDR");
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_verified);
+    }
+
+    #[test]
+    fn test_parse_key_announcement_over_96_bytes() {
+        // More than 96 bytes (has signature at correct position)
+        let note = vec![0x42u8; 128];
+        // First 32 bytes are the key, bytes 32..96 would be the signature
+        // With garbage data, this should not verify
+        let result = parse_key_announcement(&note, "SOMEADDR");
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_verified);
+    }
+
+    #[test]
+    fn test_decode_algorand_address_various_keys() {
+        use sha2::Digest;
+
+        // Test with several different key values
+        for i in 0u8..5 {
+            let pubkey = [i; 32];
+            let hash = sha2::Sha512_256::digest(pubkey);
+            let checksum = &hash[hash.len() - 4..];
+            let mut full = Vec::with_capacity(36);
+            full.extend_from_slice(&pubkey);
+            full.extend_from_slice(checksum);
+            let address = data_encoding::BASE32_NOPAD.encode(&full);
+
+            let decoded = decode_algorand_address(&address);
+            assert!(decoded.is_some(), "key {} should decode", i);
+            assert_eq!(decoded.unwrap(), pubkey);
+        }
+    }
+
+    /// Mock indexer for discover_encryption_key tests
+    struct MockDiscoveryIndexer {
+        transactions: Vec<NoteTransaction>,
+    }
+
+    #[async_trait::async_trait]
+    impl IndexerClient for MockDiscoveryIndexer {
+        async fn search_transactions(
+            &self,
+            address: &str,
+            _after_round: Option<u64>,
+            _limit: Option<u32>,
+        ) -> crate::types::Result<Vec<NoteTransaction>> {
+            Ok(self
+                .transactions
+                .iter()
+                .filter(|tx| tx.sender == address || tx.receiver == address)
+                .cloned()
+                .collect())
+        }
+
+        async fn search_transactions_between(
+            &self,
+            _a1: &str,
+            _a2: &str,
+            _after_round: Option<u64>,
+            _limit: Option<u32>,
+        ) -> crate::types::Result<Vec<NoteTransaction>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_transaction(&self, _txid: &str) -> crate::types::Result<NoteTransaction> {
+            Err(crate::types::AlgoChatError::TransactionFailed(
+                "not found".to_string(),
+            ))
+        }
+
+        async fn wait_for_indexer(
+            &self,
+            _txid: &str,
+            _timeout: u32,
+        ) -> crate::types::Result<NoteTransaction> {
+            Err(crate::types::AlgoChatError::TransactionFailed(
+                "not found".to_string(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_discover_encryption_key_no_transactions() {
+        let indexer = MockDiscoveryIndexer {
+            transactions: Vec::new(),
+        };
+        let result = discover_encryption_key(&indexer, "SOMEADDR").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_discover_encryption_key_non_self_transfer() {
+        let indexer = MockDiscoveryIndexer {
+            transactions: vec![NoteTransaction {
+                txid: "TX1".to_string(),
+                sender: "ALICE".to_string(),
+                receiver: "BOB".to_string(), // Not a self-transfer
+                note: vec![0u8; 32],
+                confirmed_round: 100,
+                round_time: 1700000000,
+            }],
+        };
+        let result = discover_encryption_key(&indexer, "ALICE").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_discover_encryption_key_valid_self_transfer() {
+        let key = [0xABu8; 32];
+        let address = "MYADDR";
+
+        let indexer = MockDiscoveryIndexer {
+            transactions: vec![NoteTransaction {
+                txid: "TX1".to_string(),
+                sender: address.to_string(),
+                receiver: address.to_string(),
+                note: key.to_vec(),
+                confirmed_round: 100,
+                round_time: 1700000000,
+            }],
+        };
+        let result = discover_encryption_key(&indexer, address).await.unwrap();
+        assert!(result.is_some());
+        let discovered = result.unwrap();
+        assert_eq!(discovered.public_key, key);
+        assert!(!discovered.is_verified); // Invalid address format, so no signature check
+    }
+
+    #[tokio::test]
+    async fn test_discover_encryption_key_with_signed_announcement() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use sha2::Digest;
+
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let ed25519_pubkey = signing_key.verifying_key().to_bytes();
+
+        // Build valid Algorand address
+        let hash = sha2::Sha512_256::digest(ed25519_pubkey);
+        let checksum = &hash[hash.len() - 4..];
+        let mut addr_bytes = Vec::with_capacity(36);
+        addr_bytes.extend_from_slice(&ed25519_pubkey);
+        addr_bytes.extend_from_slice(checksum);
+        let address = data_encoding::BASE32_NOPAD.encode(&addr_bytes);
+
+        // Create signed key announcement
+        let encryption_key = [0xABu8; 32];
+        let signature = signing_key.sign(&encryption_key);
+        let mut note = Vec::with_capacity(96);
+        note.extend_from_slice(&encryption_key);
+        note.extend_from_slice(&signature.to_bytes());
+
+        let indexer = MockDiscoveryIndexer {
+            transactions: vec![NoteTransaction {
+                txid: "TX1".to_string(),
+                sender: address.clone(),
+                receiver: address.clone(),
+                note,
+                confirmed_round: 100,
+                round_time: 1700000000,
+            }],
+        };
+
+        let result = discover_encryption_key(&indexer, &address).await.unwrap();
+        assert!(result.is_some());
+        let discovered = result.unwrap();
+        assert_eq!(discovered.public_key, encryption_key);
+        assert!(discovered.is_verified);
+    }
+
+    #[tokio::test]
+    async fn test_discover_encryption_key_skips_short_notes() {
+        let address = "MYADDR";
+
+        let indexer = MockDiscoveryIndexer {
+            transactions: vec![NoteTransaction {
+                txid: "TX1".to_string(),
+                sender: address.to_string(),
+                receiver: address.to_string(),
+                note: vec![1, 2, 3], // Too short for key announcement
+                confirmed_round: 100,
+                round_time: 1700000000,
+            }],
+        };
+
+        let result = discover_encryption_key(&indexer, address).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_suggested_params_debug() {
+        let params = SuggestedParams {
+            fee: 1000,
+            min_fee: 1000,
+            first_valid: 100,
+            last_valid: 1100,
+            genesis_id: "testnet-v1.0".to_string(),
+            genesis_hash: [0u8; 32],
+        };
+        let debug = format!("{:?}", params);
+        assert!(debug.contains("testnet-v1.0"));
+    }
+
+    #[test]
+    fn test_account_info_debug() {
+        let info = AccountInfo {
+            address: "ADDR123".to_string(),
+            amount: 1_000_000,
+            min_balance: 100_000,
+        };
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("ADDR123"));
+        assert!(debug.contains("1000000"));
+    }
 }
