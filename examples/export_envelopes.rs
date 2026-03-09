@@ -2,9 +2,7 @@
 //!
 //! Exports both standard and PSK protocol envelopes.
 
-use algochat::{
-    derive_keys_from_seed, encode_psk_envelope, encrypt_message, encrypt_psk_message,
-};
+use algochat::{derive_keys_from_seed, encode_psk_envelope, encrypt_message, encrypt_psk_message};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -74,7 +72,10 @@ fn main() {
         count += 1;
     }
 
-    println!("Rust: exported {} standard envelopes to {}", count, output_dir);
+    println!(
+        "Rust: exported {} standard envelopes to {}",
+        count, output_dir
+    );
 
     // Export PSK envelopes
     let psk_dir = format!("{}-psk", output_dir);
@@ -103,8 +104,5 @@ fn main() {
         psk_count += 1;
     }
 
-    println!(
-        "Rust: exported {} PSK envelopes to {}",
-        psk_count, psk_dir
-    );
+    println!("Rust: exported {} PSK envelopes to {}", psk_count, psk_dir);
 }

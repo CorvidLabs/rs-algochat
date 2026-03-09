@@ -400,8 +400,7 @@ mod tests {
         let current_psk = derive_psk_at_counter(&initial_psk, ratchet_counter).unwrap();
 
         // ECDH with recipient
-        let shared_secret =
-            crate::keys::x25519_ecdh(&ephemeral_private, &bob_public);
+        let shared_secret = crate::keys::x25519_ecdh(&ephemeral_private, &bob_public);
 
         // Hybrid symmetric key
         let symmetric_key = derive_hybrid_symmetric_key(
@@ -424,8 +423,7 @@ mod tests {
         );
 
         // Encrypt sender key
-        let sender_shared =
-            crate::keys::x25519_ecdh(&ephemeral_private, &sender_public);
+        let sender_shared = crate::keys::x25519_ecdh(&ephemeral_private, &sender_public);
         let sender_encryption_key = derive_sender_key(
             &sender_shared,
             &current_psk,
@@ -435,7 +433,9 @@ mod tests {
         .unwrap();
 
         let sender_cipher = ChaCha20Poly1305::new_from_slice(&sender_encryption_key).unwrap();
-        let encrypted_sender_key = sender_cipher.encrypt(nonce, symmetric_key.as_slice()).unwrap();
+        let encrypted_sender_key = sender_cipher
+            .encrypt(nonce, symmetric_key.as_slice())
+            .unwrap();
 
         assert_eq!(
             hex::encode(&encrypted_sender_key),

@@ -387,10 +387,7 @@ where
     ) -> Result<Vec<u8>> {
         let mut channels = self.psk_channels.write().await;
         let (initial_psk, state) = channels.get_mut(peer_address).ok_or_else(|| {
-            AlgoChatError::EncryptionError(format!(
-                "No PSK channel for address: {}",
-                peer_address
-            ))
+            AlgoChatError::EncryptionError(format!("No PSK channel for address: {}", peer_address))
         })?;
 
         let counter = state.advance_send_counter();
@@ -413,11 +410,7 @@ where
     /// # Arguments
     /// * `envelope_bytes` - The raw PSK envelope bytes
     /// * `peer_address` - The peer's Algorand address (for PSK channel lookup)
-    pub async fn decrypt_psk(
-        &self,
-        envelope_bytes: &[u8],
-        peer_address: &str,
-    ) -> Result<String> {
+    pub async fn decrypt_psk(&self, envelope_bytes: &[u8], peer_address: &str) -> Result<String> {
         if !is_psk_message(envelope_bytes) {
             return Err(AlgoChatError::InvalidEnvelope(
                 "Not a PSK message".to_string(),
@@ -428,10 +421,7 @@ where
 
         let mut channels = self.psk_channels.write().await;
         let (initial_psk, state) = channels.get_mut(peer_address).ok_or_else(|| {
-            AlgoChatError::DecryptionError(format!(
-                "No PSK channel for address: {}",
-                peer_address
-            ))
+            AlgoChatError::DecryptionError(format!("No PSK channel for address: {}", peer_address))
         })?;
 
         // Validate counter (replay protection)
@@ -454,11 +444,7 @@ where
     ///
     /// For PSK messages, `peer_address` is used to look up the PSK channel.
     /// For standard messages, `peer_address` is unused.
-    pub async fn decrypt_auto(
-        &self,
-        envelope_bytes: &[u8],
-        peer_address: &str,
-    ) -> Result<String> {
+    pub async fn decrypt_auto(&self, envelope_bytes: &[u8], peer_address: &str) -> Result<String> {
         if is_psk_message(envelope_bytes) {
             self.decrypt_psk(envelope_bytes, peer_address).await
         } else if is_chat_message(envelope_bytes) {
@@ -1104,7 +1090,10 @@ mod tests {
         bob.add_psk_channel(ALICE_ADDR, psk).await;
 
         let bob_key = bob.encryption_public_key();
-        let encrypted = alice.encrypt_psk("Hello PSK!", &bob_key, BOB_ADDR).await.unwrap();
+        let encrypted = alice
+            .encrypt_psk("Hello PSK!", &bob_key, BOB_ADDR)
+            .await
+            .unwrap();
 
         let decrypted = bob.decrypt_psk(&encrypted, ALICE_ADDR).await.unwrap();
         assert_eq!(decrypted, "Hello PSK!");
@@ -1119,7 +1108,10 @@ mod tests {
         alice.add_psk_channel(BOB_ADDR, psk).await;
 
         let bob_key = bob.encryption_public_key();
-        let encrypted = alice.encrypt_psk("My own message", &bob_key, BOB_ADDR).await.unwrap();
+        let encrypted = alice
+            .encrypt_psk("My own message", &bob_key, BOB_ADDR)
+            .await
+            .unwrap();
 
         // Alice (sender) can decrypt her own PSK message
         let decrypted = alice.decrypt_psk(&encrypted, BOB_ADDR).await.unwrap();
@@ -1156,7 +1148,10 @@ mod tests {
         bob.add_psk_channel(ALICE_ADDR, psk).await;
 
         let bob_key = bob.encryption_public_key();
-        let encrypted = alice.encrypt_psk("First", &bob_key, BOB_ADDR).await.unwrap();
+        let encrypted = alice
+            .encrypt_psk("First", &bob_key, BOB_ADDR)
+            .await
+            .unwrap();
 
         // First decrypt succeeds
         bob.decrypt_psk(&encrypted, ALICE_ADDR).await.unwrap();
@@ -1198,7 +1193,10 @@ mod tests {
         bob.add_psk_channel(ALICE_ADDR, psk).await;
 
         let bob_key = bob.encryption_public_key();
-        let encrypted = alice.encrypt_psk("PSK auto", &bob_key, BOB_ADDR).await.unwrap();
+        let encrypted = alice
+            .encrypt_psk("PSK auto", &bob_key, BOB_ADDR)
+            .await
+            .unwrap();
 
         let decrypted = bob.decrypt_auto(&encrypted, ALICE_ADDR).await.unwrap();
         assert_eq!(decrypted, "PSK auto");

@@ -379,11 +379,7 @@ fn test_decrypt_rust_psk_envelopes() {
         }
     }
 
-    println!(
-        "Rust PSK cross-impl: {}/{} passed",
-        passed,
-        passed + failed
-    );
+    println!("Rust PSK cross-impl: {}/{} passed", passed, passed + failed);
     assert_eq!(failed, 0, "Some Rust PSK envelopes failed to decrypt");
 }
 
