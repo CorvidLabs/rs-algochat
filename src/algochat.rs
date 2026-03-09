@@ -61,6 +61,9 @@ impl AlgoChatConfig {
     }
 }
 
+/// Map of peer addresses to their PSK and channel state.
+type PskChannelMap = HashMap<String, ([u8; 32], PSKState)>;
+
 /// The main AlgoChat client for encrypted messaging.
 ///
 /// This provides a high-level API for sending and receiving encrypted
@@ -98,7 +101,7 @@ where
     /// Active conversations.
     conversations: Arc<RwLock<Vec<Conversation>>>,
     /// PSK channels: maps peer address to (initial_psk, state).
-    psk_channels: Arc<RwLock<HashMap<String, ([u8; 32], PSKState)>>>,
+    psk_channels: Arc<RwLock<PskChannelMap>>,
 }
 
 impl<A, I, S, M> AlgoChat<A, I, S, M>
