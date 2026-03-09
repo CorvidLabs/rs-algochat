@@ -1,6 +1,8 @@
 //! Export test envelopes for cross-implementation verification.
+//!
+//! Exports both standard and PSK protocol envelopes.
 
-use algochat::{derive_keys_from_seed, encrypt_message};
+use algochat::{derive_keys_from_seed, encode_psk_envelope, encrypt_message, encrypt_psk_message};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -70,5 +72,37 @@ fn main() {
         count += 1;
     }
 
-    println!("Rust: exported {} envelopes to {}", count, output_dir);
+    println!(
+        "Rust: exported {} standard envelopes to {}",
+        count, output_dir
+    );
+
+    // Export PSK envelopes
+    let psk_dir = format!("{}-psk", output_dir);
+    let psk_output_path = Path::new(&psk_dir);
+    fs::create_dir_all(psk_output_path).unwrap();
+
+    let initial_psk = [0xAAu8; 32];
+    let mut psk_count = 0;
+
+    for (counter, (key, message)) in messages.iter().enumerate() {
+        let envelope = encrypt_psk_message(
+            message,
+            &alice_private,
+            &alice_public,
+            &bob_public,
+            &initial_psk,
+            counter as u32,
+        )
+        .unwrap();
+        let encoded = encode_psk_envelope(&envelope);
+        let hex_encoded = hex::encode(&encoded);
+
+        let file_path = psk_output_path.join(format!("{}.hex", key));
+        fs::write(&file_path, &hex_encoded).unwrap();
+        println!("✓ PSK {}", key);
+        psk_count += 1;
+    }
+
+    println!("Rust: exported {} PSK envelopes to {}", psk_count, psk_dir);
 }

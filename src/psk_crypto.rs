@@ -370,4 +370,110 @@ mod tests {
         let decrypted = decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk).unwrap();
         assert_eq!(decrypted, message);
     }
+
+    /// Protocol spec Test Case 4.3: PSK Encryption Round-Trip with known vectors
+    #[test]
+    fn test_spec_vector_4_3_psk_encryption_roundtrip() {
+        use crate::psk_envelope::{decode_psk_envelope, encode_psk_envelope};
+        use crate::psk_ratchet::{
+            derive_hybrid_symmetric_key, derive_psk_at_counter, derive_sender_key,
+        };
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit},
+            ChaCha20Poly1305, Nonce,
+        };
+
+        let sender_seed = [0x01u8; 32];
+        let recipient_seed = [0x02u8; 32];
+        let ephemeral_seed = [0x03u8; 32];
+        let initial_psk = [0xAAu8; 32];
+        let nonce_bytes: [u8; 12] = [0x04u8; 12];
+        let ratchet_counter: u32 = 0;
+
+        let (_, sender_public) = derive_keys_from_seed(&sender_seed).unwrap();
+        let (bob_private, bob_public) = derive_keys_from_seed(&recipient_seed).unwrap();
+        let (ephemeral_private, ephemeral_public) = derive_keys_from_seed(&ephemeral_seed).unwrap();
+
+        let plaintext = r#"{"text":"Hello, AlgoChat!"}"#;
+
+        // Derive current PSK
+        let current_psk = derive_psk_at_counter(&initial_psk, ratchet_counter).unwrap();
+
+        // ECDH with recipient
+        let shared_secret = crate::keys::x25519_ecdh(&ephemeral_private, &bob_public);
+
+        // Hybrid symmetric key
+        let symmetric_key = derive_hybrid_symmetric_key(
+            &shared_secret,
+            &current_psk,
+            ephemeral_public.as_bytes(),
+            sender_public.as_bytes(),
+            bob_public.as_bytes(),
+        )
+        .unwrap();
+
+        // Encrypt
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key).unwrap();
+        let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes()).unwrap();
+
+        assert_eq!(
+            hex::encode(&ciphertext),
+            "e12310ee1bb20af305c081c781ca5c812851be7463629020db38b18eecb9e1ba17f3cdb5eb3b61b4a0d8af"
+        );
+
+        // Encrypt sender key
+        let sender_shared = crate::keys::x25519_ecdh(&ephemeral_private, &sender_public);
+        let sender_encryption_key = derive_sender_key(
+            &sender_shared,
+            &current_psk,
+            ephemeral_public.as_bytes(),
+            sender_public.as_bytes(),
+        )
+        .unwrap();
+
+        let sender_cipher = ChaCha20Poly1305::new_from_slice(&sender_encryption_key).unwrap();
+        let encrypted_sender_key = sender_cipher
+            .encrypt(nonce, symmetric_key.as_slice())
+            .unwrap();
+
+        assert_eq!(
+            hex::encode(&encrypted_sender_key),
+            "1e52d902edadbb55263ded7fdd3cbaf39224813d2b528ac8977ad7a826a2a74965f97d8460a288ee6ed2b1b233b76e62"
+        );
+
+        // Build envelope and verify wire format
+        let envelope = PSKEnvelope {
+            ratchet_counter,
+            sender_public_key: *sender_public.as_bytes(),
+            ephemeral_public_key: *ephemeral_public.as_bytes(),
+            nonce: nonce_bytes,
+            encrypted_sender_key,
+            ciphertext,
+        };
+
+        let encoded = encode_psk_envelope(&envelope);
+        let expected_hex = concat!(
+            "010200000000",
+            "cec4b54db91870aef26b5fb00a5cad74a146c69ab5bd241ba8247e977e3ee86c",
+            "a56fa4362f0646d8818192d769727ca9dca7fc60730b69b632fc7bb370757f53",
+            "040404040404040404040404",
+            "1e52d902edadbb55263ded7fdd3cbaf39224813d2b528ac8977ad7a826a2a74965f97d8460a288ee6ed2b1b233b76e62",
+            "e12310ee1bb20af305c081c781ca5c812851be7463629020db38b18eecb9e1ba17f3cdb5eb3b61b4a0d8af"
+        );
+        assert_eq!(hex::encode(&encoded), expected_hex);
+        assert_eq!(encoded.len(), 173);
+
+        // Verify decryption as recipient
+        let decoded = decode_psk_envelope(&encoded).unwrap();
+        let decrypted =
+            decrypt_psk_message(&decoded, &bob_private, &bob_public, &initial_psk).unwrap();
+        assert_eq!(decrypted, plaintext);
+
+        // Verify decryption as sender
+        let (alice_private, alice_public) = derive_keys_from_seed(&sender_seed).unwrap();
+        let decrypted_sender =
+            decrypt_psk_message(&decoded, &alice_private, &alice_public, &initial_psk).unwrap();
+        assert_eq!(decrypted_sender, plaintext);
+    }
 }

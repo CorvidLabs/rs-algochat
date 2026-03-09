@@ -2,8 +2,12 @@
 //!
 //! These tests verify that Rust can decrypt messages encrypted by other
 //! implementations, ensuring full protocol compatibility.
+//! Covers both standard (protocol 0x01) and PSK (protocol 0x02) envelopes.
 
-use algochat::{decrypt_message, derive_keys_from_seed, is_chat_message, ChatEnvelope};
+use algochat::{
+    decode_psk_envelope, decrypt_message, decrypt_psk_message, derive_keys_from_seed,
+    is_chat_message, is_psk_message, ChatEnvelope,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -297,4 +301,120 @@ fn test_decrypt_rust_envelopes() {
 
     println!("Rust cross-impl: {}/{} passed", passed, passed + failed);
     assert_eq!(failed, 0, "Some Rust envelopes failed to decrypt");
+}
+
+// ============================================================================
+// PSK cross-implementation tests
+// ============================================================================
+
+const PSK_INITIAL_KEY: [u8; 32] = [0xAA; 32];
+
+fn decrypt_psk_envelope_file(
+    path: &Path,
+    bob_private: &x25519_dalek::StaticSecret,
+    bob_public: &x25519_dalek::PublicKey,
+    counter: u32,
+) -> Option<String> {
+    let hex_content = fs::read_to_string(path).ok()?.trim().to_string();
+    let envelope_bytes = hex::decode(&hex_content).ok()?;
+
+    if !is_psk_message(&envelope_bytes) {
+        return None;
+    }
+
+    let envelope = decode_psk_envelope(&envelope_bytes).ok()?;
+
+    // Verify counter matches expected
+    if envelope.ratchet_counter != counter {
+        return None;
+    }
+
+    decrypt_psk_message(&envelope, bob_private, bob_public, &PSK_INITIAL_KEY).ok()
+}
+
+fn find_psk_envelope_dir(impl_name: &str) -> Option<std::path::PathBuf> {
+    let ci_path_str = format!("../test-envelopes-{}-psk", impl_name);
+    let ci_path = Path::new(&ci_path_str);
+    if ci_path.exists() {
+        return Some(ci_path.to_path_buf());
+    }
+    let dev_path_str = format!("../test-algochat/test-envelopes-{}-psk", impl_name);
+    let dev_path = Path::new(&dev_path_str);
+    if dev_path.exists() {
+        return Some(dev_path.to_path_buf());
+    }
+    None
+}
+
+#[test]
+fn test_decrypt_rust_psk_envelopes() {
+    let Some(rust_dir) = find_psk_envelope_dir("rust") else {
+        println!("Skipping Rust PSK envelope tests - directory not found");
+        return;
+    };
+
+    let (bob_private, bob_public) = bob_keys();
+    let messages = test_messages();
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for (counter, (key, expected)) in messages.iter().enumerate() {
+        let path = rust_dir.join(format!("{}.hex", key));
+        if !path.exists() {
+            continue;
+        }
+
+        match decrypt_psk_envelope_file(&path, &bob_private, &bob_public, counter as u32) {
+            Some(text) if text == *expected => {
+                passed += 1;
+            }
+            Some(text) => {
+                failed += 1;
+                println!("✗ PSK {} - mismatch: got {:?}", key, text);
+            }
+            None => {
+                failed += 1;
+                println!("✗ PSK {} - failed to decrypt", key);
+            }
+        }
+    }
+
+    println!("Rust PSK cross-impl: {}/{} passed", passed, passed + failed);
+    assert_eq!(failed, 0, "Some Rust PSK envelopes failed to decrypt");
+}
+
+#[test]
+fn test_decrypt_python_psk_envelopes() {
+    let Some(py_dir) = find_psk_envelope_dir("python") else {
+        println!("Skipping Python PSK envelope tests - directory not found");
+        return;
+    };
+
+    let (bob_private, bob_public) = bob_keys();
+    let messages = test_messages();
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for (counter, (key, expected)) in messages.iter().enumerate() {
+        let path = py_dir.join(format!("{}.hex", key));
+        if !path.exists() {
+            continue;
+        }
+
+        match decrypt_psk_envelope_file(&path, &bob_private, &bob_public, counter as u32) {
+            Some(text) if text == *expected => {
+                passed += 1;
+            }
+            _ => {
+                failed += 1;
+            }
+        }
+    }
+
+    println!(
+        "Python PSK cross-impl: {}/{} passed",
+        passed,
+        passed + failed
+    );
+    assert_eq!(failed, 0, "Some Python PSK envelopes failed to decrypt");
 }

@@ -284,4 +284,89 @@ mod tests {
         let key3 = derive_sender_key(&shared_secret, &different_psk, &ephemeral, &sender).unwrap();
         assert_ne!(key, key3);
     }
+
+    /// Protocol spec Test Case 4.2: PSK Symmetric Key Derivation
+    #[test]
+    fn test_spec_vector_4_2_psk_symmetric_key_derivation() {
+        use crate::keys::derive_keys_from_seed;
+
+        let sender_seed = [0x01u8; 32];
+        let recipient_seed = [0x02u8; 32];
+        let ephemeral_seed = [0x03u8; 32];
+        let initial_psk = [0xAAu8; 32];
+
+        let (sender_private, sender_public) = derive_keys_from_seed(&sender_seed).unwrap();
+        let (recipient_private, recipient_public) = derive_keys_from_seed(&recipient_seed).unwrap();
+        let (ephemeral_private, ephemeral_public) = derive_keys_from_seed(&ephemeral_seed).unwrap();
+
+        // Verify public keys match spec
+        assert_eq!(
+            hex::encode(sender_public.as_bytes()),
+            "cec4b54db91870aef26b5fb00a5cad74a146c69ab5bd241ba8247e977e3ee86c"
+        );
+        assert_eq!(
+            hex::encode(recipient_public.as_bytes()),
+            "5d5da7177c24372f08fbd5f2acaf1a94296a9fd1d747e03a370ab162ed484d09"
+        );
+        assert_eq!(
+            hex::encode(ephemeral_public.as_bytes()),
+            "a56fa4362f0646d8818192d769727ca9dca7fc60730b69b632fc7bb370757f53"
+        );
+
+        // Derive current PSK at counter 0
+        let current_psk = derive_psk_at_counter(&initial_psk, 0).unwrap();
+        assert_eq!(
+            hex::encode(current_psk),
+            "2918fd486b9bd024d712f6234b813c0f4167237d60c2c1fca37326b20497c165"
+        );
+
+        // ECDH: ephemeral -> recipient
+        let shared_secret = crate::keys::x25519_ecdh(&ephemeral_private, &recipient_public);
+        assert_eq!(
+            hex::encode(shared_secret),
+            "3d4a443a1a0cafb7bb0eee148334f307e862ba9b5d517b475c903f8245ff1750"
+        );
+
+        // Hybrid symmetric key
+        let psk_symmetric_key = derive_hybrid_symmetric_key(
+            &shared_secret,
+            &current_psk,
+            ephemeral_public.as_bytes(),
+            sender_public.as_bytes(),
+            recipient_public.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            hex::encode(psk_symmetric_key),
+            "cf082d0fbd4d380a5278cc29b3d584ede66f29776f86cbc8c065a9c5705de9d1"
+        );
+
+        // ECDH: ephemeral -> sender
+        let sender_shared_secret = crate::keys::x25519_ecdh(&ephemeral_private, &sender_public);
+        assert_eq!(
+            hex::encode(sender_shared_secret),
+            "86a66e48b0821f96ec63514f37ab235c2805bdb4b1b2fce695ff8a75c287eb16"
+        );
+
+        // Sender encryption key
+        let psk_sender_key = derive_sender_key(
+            &sender_shared_secret,
+            &current_psk,
+            ephemeral_public.as_bytes(),
+            sender_public.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            hex::encode(psk_sender_key),
+            "ca575ea2874b1f074930026f7a2729cc1543f593bc185712e65be4eab6660a59"
+        );
+
+        // Also verify recipient can derive the same shared secret
+        let recipient_shared = crate::keys::x25519_ecdh(&recipient_private, &ephemeral_public);
+        assert_eq!(shared_secret, recipient_shared);
+
+        // And sender can derive the same sender shared secret
+        let sender_shared = crate::keys::x25519_ecdh(&sender_private, &ephemeral_public);
+        assert_eq!(sender_shared_secret, sender_shared);
+    }
 }
