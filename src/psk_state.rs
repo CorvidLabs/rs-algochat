@@ -5,6 +5,8 @@
 
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
+
 use crate::psk_types::PSK_COUNTER_WINDOW;
 use crate::types::{AlgoChatError, Result};
 
@@ -12,7 +14,9 @@ use crate::types::{AlgoChatError, Result};
 ///
 /// Tracks the send counter, the peer's last known counter, and a set
 /// of seen counters for replay protection.
-#[derive(Debug, Clone)]
+///
+/// Implements `Serialize`/`Deserialize` for persistence across restarts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PSKState {
     /// The next counter value to use when sending.
     pub send_counter: u32,
@@ -191,5 +195,22 @@ mod tests {
         let counter = state.advance_send_counter();
         assert_eq!(counter, u32::MAX);
         assert_eq!(state.send_counter, 0);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let mut state = PSKState::new();
+        state.advance_send_counter();
+        state.advance_send_counter();
+        state.record_receive(5);
+        state.record_receive(3);
+        state.record_receive(7);
+
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: PSKState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.send_counter, state.send_counter);
+        assert_eq!(restored.peer_last_counter, state.peer_last_counter);
+        assert_eq!(restored.seen_counters, state.seen_counters);
     }
 }

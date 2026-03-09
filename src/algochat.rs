@@ -3,6 +3,7 @@
 //! This module provides the primary interface for sending and receiving
 //! encrypted messages using the AlgoChat protocol.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -13,6 +14,9 @@ use crate::crypto::{decrypt_message, encrypt_message};
 use crate::envelope::{is_chat_message, ChatEnvelope};
 use crate::keys::derive_keys_from_seed;
 use crate::models::{Conversation, DiscoveredKey, Message, MessageDirection};
+use crate::psk_crypto::{decrypt_psk_message, encrypt_psk_message};
+use crate::psk_envelope::{decode_psk_envelope, encode_psk_envelope, is_psk_message};
+use crate::psk_state::PSKState;
 use crate::queue::SendQueue;
 use crate::storage::{EncryptionKeyStorage, MessageCache, PublicKeyCache};
 use crate::types::{AlgoChatError, Result};
@@ -93,6 +97,8 @@ where
     send_queue: SendQueue,
     /// Active conversations.
     conversations: Arc<RwLock<Vec<Conversation>>>,
+    /// PSK channels: maps peer address to (initial_psk, state).
+    psk_channels: Arc<RwLock<HashMap<String, ([u8; 32], PSKState)>>>,
 }
 
 impl<A, I, S, M> AlgoChat<A, I, S, M>
@@ -140,6 +146,7 @@ where
             public_key_cache: PublicKeyCache::default(),
             send_queue: SendQueue::default(),
             conversations: Arc::new(RwLock::new(Vec::new())),
+            psk_channels: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -342,6 +349,136 @@ where
     /// Returns the public key cache.
     pub fn public_key_cache(&self) -> &PublicKeyCache {
         &self.public_key_cache
+    }
+
+    /// Registers a PSK channel with a peer.
+    ///
+    /// # Arguments
+    /// * `peer_address` - The Algorand address of the peer
+    /// * `initial_psk` - The 32-byte pre-shared key exchanged out-of-band
+    pub async fn add_psk_channel(&self, peer_address: &str, initial_psk: [u8; 32]) {
+        let mut channels = self.psk_channels.write().await;
+        channels.insert(peer_address.to_string(), (initial_psk, PSKState::new()));
+    }
+
+    /// Removes a PSK channel with a peer.
+    pub async fn remove_psk_channel(&self, peer_address: &str) -> bool {
+        let mut channels = self.psk_channels.write().await;
+        channels.remove(peer_address).is_some()
+    }
+
+    /// Returns whether a PSK channel exists for a peer.
+    pub async fn has_psk_channel(&self, peer_address: &str) -> bool {
+        let channels = self.psk_channels.read().await;
+        channels.contains_key(peer_address)
+    }
+
+    /// Encrypts a message using a PSK channel.
+    ///
+    /// # Arguments
+    /// * `message` - The message text to encrypt
+    /// * `recipient_public_key` - Recipient's X25519 public key
+    /// * `peer_address` - The peer's Algorand address (for PSK channel lookup)
+    pub async fn encrypt_psk(
+        &self,
+        message: &str,
+        recipient_public_key: &[u8; 32],
+        peer_address: &str,
+    ) -> Result<Vec<u8>> {
+        let mut channels = self.psk_channels.write().await;
+        let (initial_psk, state) = channels.get_mut(peer_address).ok_or_else(|| {
+            AlgoChatError::EncryptionError(format!(
+                "No PSK channel for address: {}",
+                peer_address
+            ))
+        })?;
+
+        let counter = state.advance_send_counter();
+        let recipient_key = PublicKey::from(*recipient_public_key);
+
+        let envelope = encrypt_psk_message(
+            message,
+            &self.encryption_private_key,
+            &self.encryption_public_key,
+            &recipient_key,
+            initial_psk,
+            counter,
+        )?;
+
+        Ok(encode_psk_envelope(&envelope))
+    }
+
+    /// Decrypts a PSK message from a peer.
+    ///
+    /// # Arguments
+    /// * `envelope_bytes` - The raw PSK envelope bytes
+    /// * `peer_address` - The peer's Algorand address (for PSK channel lookup)
+    pub async fn decrypt_psk(
+        &self,
+        envelope_bytes: &[u8],
+        peer_address: &str,
+    ) -> Result<String> {
+        if !is_psk_message(envelope_bytes) {
+            return Err(AlgoChatError::InvalidEnvelope(
+                "Not a PSK message".to_string(),
+            ));
+        }
+
+        let envelope = decode_psk_envelope(envelope_bytes)?;
+
+        let mut channels = self.psk_channels.write().await;
+        let (initial_psk, state) = channels.get_mut(peer_address).ok_or_else(|| {
+            AlgoChatError::DecryptionError(format!(
+                "No PSK channel for address: {}",
+                peer_address
+            ))
+        })?;
+
+        // Validate counter (replay protection)
+        state.validate_counter(envelope.ratchet_counter)?;
+
+        let text = decrypt_psk_message(
+            &envelope,
+            &self.encryption_private_key,
+            &self.encryption_public_key,
+            initial_psk,
+        )?;
+
+        // Record the counter after successful decryption
+        state.record_receive(envelope.ratchet_counter);
+
+        Ok(text)
+    }
+
+    /// Decrypts any message (standard or PSK), auto-detecting the protocol.
+    ///
+    /// For PSK messages, `peer_address` is used to look up the PSK channel.
+    /// For standard messages, `peer_address` is unused.
+    pub async fn decrypt_auto(
+        &self,
+        envelope_bytes: &[u8],
+        peer_address: &str,
+    ) -> Result<String> {
+        if is_psk_message(envelope_bytes) {
+            self.decrypt_psk(envelope_bytes, peer_address).await
+        } else if is_chat_message(envelope_bytes) {
+            let envelope = ChatEnvelope::decode(envelope_bytes)?;
+            let decrypted = decrypt_message(
+                &envelope,
+                &self.encryption_private_key,
+                &self.encryption_public_key,
+            )?;
+            match decrypted {
+                Some(content) => Ok(content.text),
+                None => Err(AlgoChatError::DecryptionError(
+                    "Message was a key-publish, not a chat message".to_string(),
+                )),
+            }
+        } else {
+            Err(AlgoChatError::InvalidEnvelope(
+                "Not an AlgoChat message".to_string(),
+            ))
+        }
     }
 }
 
@@ -939,5 +1076,131 @@ mod tests {
         let cache = client.public_key_cache();
         let result = cache.retrieve("nonexistent").await;
         assert!(result.is_none());
+    }
+
+    // ========================================================================
+    // PSK channel tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_psk_channel_lifecycle() {
+        let client = make_alice_client(MockIndexer::new()).await;
+        let psk = [0xAAu8; 32];
+
+        assert!(!client.has_psk_channel(BOB_ADDR).await);
+        client.add_psk_channel(BOB_ADDR, psk).await;
+        assert!(client.has_psk_channel(BOB_ADDR).await);
+        assert!(client.remove_psk_channel(BOB_ADDR).await);
+        assert!(!client.has_psk_channel(BOB_ADDR).await);
+    }
+
+    #[tokio::test]
+    async fn test_psk_encrypt_decrypt_roundtrip() {
+        let alice = make_alice_client(MockIndexer::new()).await;
+        let bob = make_bob_client(MockIndexer::new()).await;
+        let psk = [0xAAu8; 32];
+
+        alice.add_psk_channel(BOB_ADDR, psk).await;
+        bob.add_psk_channel(ALICE_ADDR, psk).await;
+
+        let bob_key = bob.encryption_public_key();
+        let encrypted = alice.encrypt_psk("Hello PSK!", &bob_key, BOB_ADDR).await.unwrap();
+
+        let decrypted = bob.decrypt_psk(&encrypted, ALICE_ADDR).await.unwrap();
+        assert_eq!(decrypted, "Hello PSK!");
+    }
+
+    #[tokio::test]
+    async fn test_psk_sender_self_decrypt() {
+        let alice = make_alice_client(MockIndexer::new()).await;
+        let bob = make_bob_client(MockIndexer::new()).await;
+        let psk = [0xAAu8; 32];
+
+        alice.add_psk_channel(BOB_ADDR, psk).await;
+
+        let bob_key = bob.encryption_public_key();
+        let encrypted = alice.encrypt_psk("My own message", &bob_key, BOB_ADDR).await.unwrap();
+
+        // Alice (sender) can decrypt her own PSK message
+        let decrypted = alice.decrypt_psk(&encrypted, BOB_ADDR).await.unwrap();
+        assert_eq!(decrypted, "My own message");
+    }
+
+    #[tokio::test]
+    async fn test_psk_counter_increments() {
+        let alice = make_alice_client(MockIndexer::new()).await;
+        let bob = make_bob_client(MockIndexer::new()).await;
+        let psk = [0xAAu8; 32];
+
+        alice.add_psk_channel(BOB_ADDR, psk).await;
+        bob.add_psk_channel(ALICE_ADDR, psk).await;
+
+        let bob_key = bob.encryption_public_key();
+
+        // Send 3 messages, each should use a different counter
+        for i in 0..3 {
+            let msg = format!("Message {}", i);
+            let encrypted = alice.encrypt_psk(&msg, &bob_key, BOB_ADDR).await.unwrap();
+            let decrypted = bob.decrypt_psk(&encrypted, ALICE_ADDR).await.unwrap();
+            assert_eq!(decrypted, msg);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_psk_replay_rejected() {
+        let alice = make_alice_client(MockIndexer::new()).await;
+        let bob = make_bob_client(MockIndexer::new()).await;
+        let psk = [0xAAu8; 32];
+
+        alice.add_psk_channel(BOB_ADDR, psk).await;
+        bob.add_psk_channel(ALICE_ADDR, psk).await;
+
+        let bob_key = bob.encryption_public_key();
+        let encrypted = alice.encrypt_psk("First", &bob_key, BOB_ADDR).await.unwrap();
+
+        // First decrypt succeeds
+        bob.decrypt_psk(&encrypted, ALICE_ADDR).await.unwrap();
+
+        // Replay attempt fails
+        let result = bob.decrypt_psk(&encrypted, ALICE_ADDR).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_psk_no_channel_error() {
+        let alice = make_alice_client(MockIndexer::new()).await;
+        let bob = make_bob_client(MockIndexer::new()).await;
+
+        let bob_key = bob.encryption_public_key();
+        let result = alice.encrypt_psk("No channel", &bob_key, BOB_ADDR).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_decrypt_auto_standard() {
+        let alice = make_alice_client(MockIndexer::new()).await;
+        let bob = make_bob_client(MockIndexer::new()).await;
+
+        let bob_key = bob.encryption_public_key();
+        let encrypted = alice.encrypt("Standard msg", &bob_key).unwrap();
+
+        let decrypted = bob.decrypt_auto(&encrypted, ALICE_ADDR).await.unwrap();
+        assert_eq!(decrypted, "Standard msg");
+    }
+
+    #[tokio::test]
+    async fn test_decrypt_auto_psk() {
+        let alice = make_alice_client(MockIndexer::new()).await;
+        let bob = make_bob_client(MockIndexer::new()).await;
+        let psk = [0xAAu8; 32];
+
+        alice.add_psk_channel(BOB_ADDR, psk).await;
+        bob.add_psk_channel(ALICE_ADDR, psk).await;
+
+        let bob_key = bob.encryption_public_key();
+        let encrypted = alice.encrypt_psk("PSK auto", &bob_key, BOB_ADDR).await.unwrap();
+
+        let decrypted = bob.decrypt_auto(&encrypted, ALICE_ADDR).await.unwrap();
+        assert_eq!(decrypted, "PSK auto");
     }
 }
