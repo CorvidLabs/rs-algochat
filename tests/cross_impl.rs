@@ -392,8 +392,7 @@ fn run_psk_cross_impl_test(impl_name: &str) {
     // Test long_text and max_payload
     let long_path = psk_dir.join("long_text.hex");
     if long_path.exists() {
-        if let Some(text) = decrypt_psk_envelope_file(&long_path, &bob_private, &bob_public, &psk)
-        {
+        if let Some(text) = decrypt_psk_envelope_file(&long_path, &bob_private, &bob_public, &psk) {
             if text == long_text() {
                 passed += 1;
                 println!("  PSK ✓ long_text");

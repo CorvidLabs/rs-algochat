@@ -121,15 +121,9 @@ fn main() {
 
     // Export at counter 0 (standard test counter)
     for (key, message) in &psk_messages {
-        let envelope = encrypt_psk_message(
-            message,
-            &alice_private,
-            &alice_public,
-            &bob_public,
-            &psk,
-            0,
-        )
-        .unwrap();
+        let envelope =
+            encrypt_psk_message(message, &alice_private, &alice_public, &bob_public, &psk, 0)
+                .unwrap();
         let encoded = encode_psk_envelope(&envelope);
         let hex_encoded = hex::encode(&encoded);
 
@@ -169,11 +163,7 @@ fn main() {
     )
     .unwrap();
     let mid_encoded = encode_psk_envelope(&mid_envelope);
-    fs::write(
-        psk_dir.join("mid_session.hex"),
-        hex::encode(&mid_encoded),
-    )
-    .unwrap();
+    fs::write(psk_dir.join("mid_session.hex"), hex::encode(&mid_encoded)).unwrap();
     println!("  v1.1 ✓ mid_session (counter=42)");
     psk_count += 1;
 
