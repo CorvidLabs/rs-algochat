@@ -2,9 +2,7 @@
 //!
 //! Exports both standard v1.0 and PSK v1.1 envelopes.
 
-use algochat::{
-    derive_keys_from_seed, encode_psk_envelope, encrypt_message, encrypt_psk_message,
-};
+use algochat::{derive_keys_from_seed, encode_psk_envelope, encrypt_message, encrypt_psk_message};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
