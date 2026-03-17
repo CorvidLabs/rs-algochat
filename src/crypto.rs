@@ -8,6 +8,7 @@ use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 use crate::envelope::ChatEnvelope;
 use crate::keys::{generate_ephemeral_keypair, x25519_ecdh};
@@ -46,7 +47,7 @@ pub fn encrypt_message(
     let recipient_pub_bytes = recipient_public_key.as_bytes();
     let ephemeral_pub_bytes = ephemeral_public.as_bytes();
 
-    let shared_secret = x25519_ecdh(&ephemeral_private, recipient_public_key);
+    let shared_secret = Zeroizing::new(x25519_ecdh(&ephemeral_private, recipient_public_key));
 
     // Build info: prefix + sender pubkey + recipient pubkey
     let mut info = Vec::with_capacity(ENCRYPTION_INFO_PREFIX.len() + 64);
@@ -54,9 +55,9 @@ pub fn encrypt_message(
     info.extend_from_slice(sender_pub_bytes);
     info.extend_from_slice(recipient_pub_bytes);
 
-    let hkdf = Hkdf::<Sha256>::new(Some(ephemeral_pub_bytes), &shared_secret);
-    let mut symmetric_key = [0u8; 32];
-    hkdf.expand(&info, &mut symmetric_key)
+    let hkdf = Hkdf::<Sha256>::new(Some(ephemeral_pub_bytes), &*shared_secret);
+    let mut symmetric_key = Zeroizing::new([0u8; 32]);
+    hkdf.expand(&info, &mut *symmetric_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("HKDF expand failed: {}", e)))?;
 
     // Generate random nonce
@@ -65,26 +66,27 @@ pub fn encrypt_message(
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt message
-    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key)
+    let cipher = ChaCha20Poly1305::new_from_slice(&*symmetric_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Cipher init failed: {}", e)))?;
     let ciphertext = cipher
         .encrypt(nonce, message_bytes)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Encryption failed: {}", e)))?;
 
     // Encrypt the symmetric key for sender (bidirectional decryption)
-    let sender_shared_secret = x25519_ecdh(&ephemeral_private, sender_public_key);
+    let sender_shared_secret =
+        Zeroizing::new(x25519_ecdh(&ephemeral_private, sender_public_key));
 
     let mut sender_info = Vec::with_capacity(SENDER_KEY_INFO_PREFIX.len() + 32);
     sender_info.extend_from_slice(SENDER_KEY_INFO_PREFIX);
     sender_info.extend_from_slice(sender_pub_bytes);
 
-    let sender_hkdf = Hkdf::<Sha256>::new(Some(ephemeral_pub_bytes), &sender_shared_secret);
-    let mut sender_encryption_key = [0u8; 32];
+    let sender_hkdf = Hkdf::<Sha256>::new(Some(ephemeral_pub_bytes), &*sender_shared_secret);
+    let mut sender_encryption_key = Zeroizing::new([0u8; 32]);
     sender_hkdf
-        .expand(&sender_info, &mut sender_encryption_key)
+        .expand(&sender_info, &mut *sender_encryption_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Sender HKDF failed: {}", e)))?;
 
-    let sender_cipher = ChaCha20Poly1305::new_from_slice(&sender_encryption_key)
+    let sender_cipher = ChaCha20Poly1305::new_from_slice(&*sender_encryption_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Sender cipher init failed: {}", e)))?;
     let encrypted_sender_key = sender_cipher
         .encrypt(nonce, symmetric_key.as_slice())
@@ -141,7 +143,7 @@ fn decrypt_as_recipient(
 ) -> Result<Vec<u8>> {
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
-    let shared_secret = x25519_ecdh(recipient_private_key, &ephemeral_public);
+    let shared_secret = Zeroizing::new(x25519_ecdh(recipient_private_key, &ephemeral_public));
 
     // Build info: prefix + sender pubkey + recipient pubkey
     let mut info = Vec::with_capacity(ENCRYPTION_INFO_PREFIX.len() + 64);
@@ -149,12 +151,12 @@ fn decrypt_as_recipient(
     info.extend_from_slice(&envelope.sender_public_key);
     info.extend_from_slice(recipient_pub_bytes);
 
-    let hkdf = Hkdf::<Sha256>::new(Some(&envelope.ephemeral_public_key), &shared_secret);
-    let mut symmetric_key = [0u8; 32];
-    hkdf.expand(&info, &mut symmetric_key)
+    let hkdf = Hkdf::<Sha256>::new(Some(&envelope.ephemeral_public_key), &*shared_secret);
+    let mut symmetric_key = Zeroizing::new([0u8; 32]);
+    hkdf.expand(&info, &mut *symmetric_key)
         .map_err(|e| AlgoChatError::DecryptionError(format!("HKDF expand failed: {}", e)))?;
 
-    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key)
+    let cipher = ChaCha20Poly1305::new_from_slice(&*symmetric_key)
         .map_err(|e| AlgoChatError::DecryptionError(format!("Cipher init failed: {}", e)))?;
     let nonce = Nonce::from_slice(&envelope.nonce);
 
@@ -171,27 +173,30 @@ fn decrypt_as_sender(
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
     // First, recover the symmetric key
-    let shared_secret = x25519_ecdh(sender_private_key, &ephemeral_public);
+    let shared_secret = Zeroizing::new(x25519_ecdh(sender_private_key, &ephemeral_public));
 
     let mut sender_info = Vec::with_capacity(SENDER_KEY_INFO_PREFIX.len() + 32);
     sender_info.extend_from_slice(SENDER_KEY_INFO_PREFIX);
     sender_info.extend_from_slice(sender_pub_bytes);
 
-    let sender_hkdf = Hkdf::<Sha256>::new(Some(&envelope.ephemeral_public_key), &shared_secret);
-    let mut sender_decryption_key = [0u8; 32];
+    let sender_hkdf =
+        Hkdf::<Sha256>::new(Some(&envelope.ephemeral_public_key), &*shared_secret);
+    let mut sender_decryption_key = Zeroizing::new([0u8; 32]);
     sender_hkdf
-        .expand(&sender_info, &mut sender_decryption_key)
+        .expand(&sender_info, &mut *sender_decryption_key)
         .map_err(|e| AlgoChatError::DecryptionError(format!("Sender HKDF failed: {}", e)))?;
 
-    let sender_cipher = ChaCha20Poly1305::new_from_slice(&sender_decryption_key)
+    let sender_cipher = ChaCha20Poly1305::new_from_slice(&*sender_decryption_key)
         .map_err(|e| AlgoChatError::DecryptionError(format!("Sender cipher init failed: {}", e)))?;
     let nonce = Nonce::from_slice(&envelope.nonce);
 
-    let symmetric_key = sender_cipher
-        .decrypt(nonce, envelope.encrypted_sender_key.as_slice())
-        .map_err(|e| {
-            AlgoChatError::DecryptionError(format!("Sender key decryption failed: {}", e))
-        })?;
+    let symmetric_key = Zeroizing::new(
+        sender_cipher
+            .decrypt(nonce, envelope.encrypted_sender_key.as_slice())
+            .map_err(|e| {
+                AlgoChatError::DecryptionError(format!("Sender key decryption failed: {}", e))
+            })?,
+    );
 
     // Now decrypt the message
     let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key).map_err(|e| {

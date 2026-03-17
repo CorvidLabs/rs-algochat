@@ -10,6 +10,7 @@ use chacha20poly1305::{
 };
 use rand::RngCore;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 use crate::keys::{generate_ephemeral_keypair, x25519_ecdh};
 use crate::psk_ratchet::{derive_hybrid_symmetric_key, derive_psk_at_counter, derive_sender_key};
@@ -42,8 +43,8 @@ pub fn encrypt_psk_message(
         return Err(AlgoChatError::MessageTooLarge(message_bytes.len()));
     }
 
-    // Derive the current PSK from the ratchet
-    let current_psk = derive_psk_at_counter(initial_psk, ratchet_counter)?;
+    // Derive the current PSK from the ratchet (zeroized on drop)
+    let current_psk = Zeroizing::new(derive_psk_at_counter(initial_psk, ratchet_counter)?);
 
     // Generate ephemeral key pair
     let (ephemeral_private, ephemeral_public) = generate_ephemeral_keypair();
@@ -52,17 +53,17 @@ pub fn encrypt_psk_message(
     let recipient_pub_bytes = recipient_public_key.as_bytes();
     let ephemeral_pub_bytes = ephemeral_public.as_bytes();
 
-    // ECDH with recipient
-    let shared_secret = x25519_ecdh(&ephemeral_private, recipient_public_key);
+    // ECDH with recipient (zeroized on drop)
+    let shared_secret = Zeroizing::new(x25519_ecdh(&ephemeral_private, recipient_public_key));
 
-    // Derive hybrid symmetric key (ECDH + PSK)
-    let symmetric_key = derive_hybrid_symmetric_key(
-        &shared_secret,
-        &current_psk,
+    // Derive hybrid symmetric key (ECDH + PSK) (zeroized on drop)
+    let symmetric_key = Zeroizing::new(derive_hybrid_symmetric_key(
+        &*shared_secret,
+        &*current_psk,
         ephemeral_pub_bytes,
         sender_pub_bytes,
         recipient_pub_bytes,
-    )?;
+    )?);
 
     // Generate random nonce
     let mut nonce_bytes = [0u8; NONCE_SIZE];
@@ -70,22 +71,23 @@ pub fn encrypt_psk_message(
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt message
-    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key)
+    let cipher = ChaCha20Poly1305::new_from_slice(&*symmetric_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("PSK cipher init failed: {}", e)))?;
     let ciphertext = cipher
         .encrypt(nonce, message_bytes)
         .map_err(|e| AlgoChatError::EncryptionError(format!("PSK encryption failed: {}", e)))?;
 
     // Encrypt the symmetric key for sender (bidirectional decryption)
-    let sender_shared_secret = x25519_ecdh(&ephemeral_private, sender_public_key);
-    let sender_encryption_key = derive_sender_key(
-        &sender_shared_secret,
-        &current_psk,
+    let sender_shared_secret =
+        Zeroizing::new(x25519_ecdh(&ephemeral_private, sender_public_key));
+    let sender_encryption_key = Zeroizing::new(derive_sender_key(
+        &*sender_shared_secret,
+        &*current_psk,
         ephemeral_pub_bytes,
         sender_pub_bytes,
-    )?;
+    )?);
 
-    let sender_cipher = ChaCha20Poly1305::new_from_slice(&sender_encryption_key).map_err(|e| {
+    let sender_cipher = ChaCha20Poly1305::new_from_slice(&*sender_encryption_key).map_err(|e| {
         AlgoChatError::EncryptionError(format!("PSK sender cipher init failed: {}", e))
     })?;
     let encrypted_sender_key = sender_cipher
@@ -126,13 +128,13 @@ pub fn decrypt_psk_message(
     let my_pub_bytes = my_public_key.as_bytes();
     let we_are_sender = my_pub_bytes == &envelope.sender_public_key;
 
-    // Derive the current PSK from the ratchet counter in the envelope
-    let current_psk = derive_psk_at_counter(initial_psk, envelope.ratchet_counter)?;
+    // Derive the current PSK from the ratchet counter in the envelope (zeroized on drop)
+    let current_psk = Zeroizing::new(derive_psk_at_counter(initial_psk, envelope.ratchet_counter)?);
 
     let plaintext = if we_are_sender {
-        decrypt_psk_as_sender(envelope, my_private_key, my_pub_bytes, &current_psk)?
+        decrypt_psk_as_sender(envelope, my_private_key, my_pub_bytes, &*current_psk)?
     } else {
-        decrypt_psk_as_recipient(envelope, my_private_key, my_pub_bytes, &current_psk)?
+        decrypt_psk_as_recipient(envelope, my_private_key, my_pub_bytes, &*current_psk)?
     };
 
     let text = std::str::from_utf8(&plaintext)
@@ -150,20 +152,20 @@ fn decrypt_psk_as_recipient(
 ) -> Result<Vec<u8>> {
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
-    // ECDH with ephemeral key
-    let shared_secret = x25519_ecdh(recipient_private_key, &ephemeral_public);
+    // ECDH with ephemeral key (zeroized on drop)
+    let shared_secret = Zeroizing::new(x25519_ecdh(recipient_private_key, &ephemeral_public));
 
-    // Derive hybrid symmetric key
-    let symmetric_key = derive_hybrid_symmetric_key(
-        &shared_secret,
+    // Derive hybrid symmetric key (zeroized on drop)
+    let symmetric_key = Zeroizing::new(derive_hybrid_symmetric_key(
+        &*shared_secret,
         current_psk,
         &envelope.ephemeral_public_key,
         &envelope.sender_public_key,
         recipient_pub_bytes,
-    )?;
+    )?);
 
     // Decrypt message
-    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key)
+    let cipher = ChaCha20Poly1305::new_from_slice(&*symmetric_key)
         .map_err(|e| AlgoChatError::DecryptionError(format!("PSK cipher init failed: {}", e)))?;
     let nonce = Nonce::from_slice(&envelope.nonce);
 
@@ -181,27 +183,29 @@ fn decrypt_psk_as_sender(
 ) -> Result<Vec<u8>> {
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
-    // ECDH with sender's own key to recover sender key
-    let shared_secret = x25519_ecdh(sender_private_key, &ephemeral_public);
+    // ECDH with sender's own key to recover sender key (zeroized on drop)
+    let shared_secret = Zeroizing::new(x25519_ecdh(sender_private_key, &ephemeral_public));
 
-    let sender_decryption_key = derive_sender_key(
-        &shared_secret,
+    let sender_decryption_key = Zeroizing::new(derive_sender_key(
+        &*shared_secret,
         current_psk,
         &envelope.ephemeral_public_key,
         sender_pub_bytes,
-    )?;
+    )?);
 
     // Decrypt the symmetric key
-    let sender_cipher = ChaCha20Poly1305::new_from_slice(&sender_decryption_key).map_err(|e| {
+    let sender_cipher = ChaCha20Poly1305::new_from_slice(&*sender_decryption_key).map_err(|e| {
         AlgoChatError::DecryptionError(format!("PSK sender cipher init failed: {}", e))
     })?;
     let nonce = Nonce::from_slice(&envelope.nonce);
 
-    let symmetric_key = sender_cipher
-        .decrypt(nonce, envelope.encrypted_sender_key.as_slice())
-        .map_err(|e| {
-            AlgoChatError::DecryptionError(format!("PSK sender key decryption failed: {}", e))
-        })?;
+    let symmetric_key = Zeroizing::new(
+        sender_cipher
+            .decrypt(nonce, envelope.encrypted_sender_key.as_slice())
+            .map_err(|e| {
+                AlgoChatError::DecryptionError(format!("PSK sender key decryption failed: {}", e))
+            })?,
+    );
 
     // Decrypt the message
     let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key).map_err(|e| {

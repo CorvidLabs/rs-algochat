@@ -428,22 +428,25 @@ impl FileKeyStorage {
         // Derive key using PBKDF2-HMAC-SHA256
         use pbkdf2::pbkdf2_hmac;
         use sha2::Sha256;
+        use zeroize::Zeroizing;
 
-        let mut derived_key = [0u8; 32];
+        let mut derived_key = Zeroizing::new([0u8; 32]);
         pbkdf2_hmac::<Sha256>(
             password.as_bytes(),
             salt,
             Self::PBKDF2_ITERATIONS,
-            &mut derived_key,
+            &mut *derived_key,
         );
+
+        let result = *derived_key;
 
         // Cache for this salt
         {
             let mut cached = self.cached_key.write().await;
-            *cached = Some((*salt, derived_key));
+            *cached = Some((*salt, result));
         }
 
-        derived_key
+        result
     }
 
     /// Sets restrictive file permissions (600 on Unix).
