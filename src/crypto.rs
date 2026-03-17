@@ -73,8 +73,7 @@ pub fn encrypt_message(
         .map_err(|e| AlgoChatError::EncryptionError(format!("Encryption failed: {}", e)))?;
 
     // Encrypt the symmetric key for sender (bidirectional decryption)
-    let sender_shared_secret =
-        Zeroizing::new(x25519_ecdh(&ephemeral_private, sender_public_key));
+    let sender_shared_secret = Zeroizing::new(x25519_ecdh(&ephemeral_private, sender_public_key));
 
     let mut sender_info = Vec::with_capacity(SENDER_KEY_INFO_PREFIX.len() + 32);
     sender_info.extend_from_slice(SENDER_KEY_INFO_PREFIX);
@@ -179,8 +178,7 @@ fn decrypt_as_sender(
     sender_info.extend_from_slice(SENDER_KEY_INFO_PREFIX);
     sender_info.extend_from_slice(sender_pub_bytes);
 
-    let sender_hkdf =
-        Hkdf::<Sha256>::new(Some(&envelope.ephemeral_public_key), &*shared_secret);
+    let sender_hkdf = Hkdf::<Sha256>::new(Some(&envelope.ephemeral_public_key), &*shared_secret);
     let mut sender_decryption_key = Zeroizing::new([0u8; 32]);
     sender_hkdf
         .expand(&sender_info, &mut *sender_decryption_key)

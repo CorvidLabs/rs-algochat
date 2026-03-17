@@ -78,8 +78,7 @@ pub fn encrypt_psk_message(
         .map_err(|e| AlgoChatError::EncryptionError(format!("PSK encryption failed: {}", e)))?;
 
     // Encrypt the symmetric key for sender (bidirectional decryption)
-    let sender_shared_secret =
-        Zeroizing::new(x25519_ecdh(&ephemeral_private, sender_public_key));
+    let sender_shared_secret = Zeroizing::new(x25519_ecdh(&ephemeral_private, sender_public_key));
     let sender_encryption_key = Zeroizing::new(derive_sender_key(
         &*sender_shared_secret,
         &*current_psk,
@@ -129,7 +128,10 @@ pub fn decrypt_psk_message(
     let we_are_sender = my_pub_bytes == &envelope.sender_public_key;
 
     // Derive the current PSK from the ratchet counter in the envelope (zeroized on drop)
-    let current_psk = Zeroizing::new(derive_psk_at_counter(initial_psk, envelope.ratchet_counter)?);
+    let current_psk = Zeroizing::new(derive_psk_at_counter(
+        initial_psk,
+        envelope.ratchet_counter,
+    )?);
 
     let plaintext = if we_are_sender {
         decrypt_psk_as_sender(envelope, my_private_key, my_pub_bytes, &*current_psk)?

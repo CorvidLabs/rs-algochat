@@ -144,7 +144,9 @@ pub fn derive_sender_key(
     sender_public_key: &[u8],
 ) -> Result<[u8; 32]> {
     // IKM = sender_shared_secret || current_psk (zeroized after use)
-    let mut ikm = Zeroizing::new(Vec::with_capacity(sender_shared_secret.len() + current_psk.len()));
+    let mut ikm = Zeroizing::new(Vec::with_capacity(
+        sender_shared_secret.len() + current_psk.len(),
+    ));
     ikm.extend_from_slice(sender_shared_secret);
     ikm.extend_from_slice(current_psk);
 
