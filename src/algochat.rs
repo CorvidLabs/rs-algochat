@@ -466,7 +466,11 @@ where
                     if let Ok(envelope) = decode_psk_envelope(&tx.note) {
                         let mut contacts = self.psk_contacts.write().await;
                         if let Some(contact) = contacts.get_mut(&other_address) {
-                            if contact.state.validate_counter(envelope.ratchet_counter).is_ok() {
+                            if contact
+                                .state
+                                .validate_counter(envelope.ratchet_counter)
+                                .is_ok()
+                            {
                                 contact.state.record_receive(envelope.ratchet_counter);
                             }
                         }
@@ -1218,7 +1222,9 @@ mod tests {
         let bob = make_bob_client(MockIndexer::new()).await;
 
         let bob_key = bob.encryption_public_key();
-        let encrypted = alice.encrypt_psk("Hello PSK!", &bob_key, &TEST_PSK, 0).unwrap();
+        let encrypted = alice
+            .encrypt_psk("Hello PSK!", &bob_key, &TEST_PSK, 0)
+            .unwrap();
 
         let decrypted = bob.decrypt_psk(&encrypted, &TEST_PSK).unwrap();
         assert_eq!(decrypted, "Hello PSK!");
@@ -1230,7 +1236,9 @@ mod tests {
         let bob = make_bob_client(MockIndexer::new()).await;
 
         let bob_key = bob.encryption_public_key();
-        let encrypted = alice.encrypt_psk("My message", &bob_key, &TEST_PSK, 0).unwrap();
+        let encrypted = alice
+            .encrypt_psk("My message", &bob_key, &TEST_PSK, 0)
+            .unwrap();
 
         // Sender should be able to decrypt own message
         let decrypted = alice.decrypt_psk(&encrypted, &TEST_PSK).unwrap();
@@ -1273,9 +1281,7 @@ mod tests {
         let bob = make_bob_client(MockIndexer::new()).await;
         let bob_key = bob.encryption_public_key();
 
-        let encrypted = alice
-            .encrypt_psk("secret", &bob_key, &TEST_PSK, 0)
-            .unwrap();
+        let encrypted = alice.encrypt_psk("secret", &bob_key, &TEST_PSK, 0).unwrap();
 
         let wrong_psk = [0xBB; 32];
         assert!(bob.decrypt_psk(&encrypted, &wrong_psk).is_err());
