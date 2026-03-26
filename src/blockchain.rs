@@ -237,11 +237,7 @@ pub async fn discover_encryption_key_paginated(
 
     loop {
         let result = indexer
-            .search_transactions_paginated(
-                address,
-                Some(page_size),
-                next_token.as_deref(),
-            )
+            .search_transactions_paginated(address, Some(page_size), next_token.as_deref())
             .await?;
 
         // Look for key announcements in the note field
