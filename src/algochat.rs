@@ -457,28 +457,22 @@ where
 
         // Decrypt the message (PSK or standard)
         let content = if is_psk {
-            let contacts = self.psk_contacts.read().await;
-            if let Some(contact) = contacts.get(&other_address) {
-                let text = self.decrypt_psk(&tx.note, &contact.psk)?;
-                // Update counter state for received PSK messages
-                drop(contacts);
-                if direction == MessageDirection::Received {
-                    if let Ok(envelope) = decode_psk_envelope(&tx.note) {
-                        let mut contacts = self.psk_contacts.write().await;
-                        if let Some(contact) = contacts.get_mut(&other_address) {
-                            if contact
-                                .state
-                                .validate_counter(envelope.ratchet_counter)
-                                .is_ok()
-                            {
-                                contact.state.record_receive(envelope.ratchet_counter);
-                            }
-                        }
-                    }
+            if direction == MessageDirection::Received {
+                // Use receive_psk() which handles counter validation, decryption,
+                // and replay protection in the correct order (validate-before-decrypt)
+                match self.receive_psk(&tx.note, &other_address).await {
+                    Ok(text) => text,
+                    Err(AlgoChatError::DecryptionError(_)) => return Ok(None), // No PSK configured
+                    Err(e) => return Err(e),
                 }
-                text
             } else {
-                return Ok(None); // PSK message but no PSK configured — skip
+                // Sent messages: just decrypt (counter was already tracked on send)
+                let contacts = self.psk_contacts.read().await;
+                if let Some(contact) = contacts.get(&other_address) {
+                    self.decrypt_psk(&tx.note, &contact.psk)?
+                } else {
+                    return Ok(None); // PSK message but no PSK configured
+                }
             }
         } else {
             self.decrypt(&tx.note, &other_key)?
