@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -45,3 +48,11 @@ jobs:
 
       - name: Clippy
         run: cargo clippy -- -D warnings
+
+  specs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Spec validation
+        uses: CorvidLabs/spec-sync@v2.1.0
