@@ -15,19 +15,41 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-algochat = "0.1"
+algochat = "0.2"
 ```
 
 ## Usage
 
+### Client API
+
+```rust
+use algochat::{AlgoChatClient, AlgorandConfig};
+
+// Create client from a 32-byte seed
+let client = AlgoChatClient::from_seed(seed, AlgorandConfig::localnet()).await?;
+
+// Discover a recipient's public key on-chain
+let key = client.discover_key("RECIPIENT_ADDR").await?;
+
+// Encrypt a message
+let recipient_pk = key.unwrap().public_key;
+let envelope = client.encrypt("Hello, World!", &recipient_pk)?;
+
+// Decrypt a received message
+let text = client.decrypt(&envelope, &sender_pk)?;
+
+// Sync and process new messages
+let messages = client.sync().await?;
+```
+
+### Low-Level Crypto
+
 ```rust
 use algochat::{derive_keys_from_seed, encrypt_message, decrypt_message, ChatEnvelope};
 
-// Derive keys from a 32-byte seed (e.g., from Algorand account)
 let (sender_private, sender_public) = derive_keys_from_seed(&seed)?;
 let (recipient_private, recipient_public) = derive_keys_from_seed(&recipient_seed)?;
 
-// Encrypt a message
 let envelope = encrypt_message(
     "Hello, World!",
     &sender_private,
@@ -35,17 +57,9 @@ let envelope = encrypt_message(
     &recipient_public,
 )?;
 
-// Encode for transmission
 let encoded = envelope.encode();
-
-// Decode received message
 let decoded = ChatEnvelope::decode(&encoded)?;
-
-// Decrypt as recipient
 let result = decrypt_message(&decoded, &recipient_private, &recipient_public)?;
-if let Some(content) = result {
-    println!("{}", content.text);
-}
 ```
 
 ## Protocol
@@ -67,17 +81,39 @@ The PSK (Pre-Shared Key) protocol extends AlgoChat with an additional layer of s
 - **Two-level ratchet**: Session + position derivation for forward secrecy
 - **Replay protection**: Counter-based state tracking with configurable window
 - **Exchange URI**: Out-of-band key sharing via `algochat-psk://` URIs
+- **Zeroized key material**: Sensitive keys are zeroized after use
 
-### PSK Usage
+### PSK Usage (Client API)
+
+The `AlgoChatClient` manages PSK contacts and counter state automatically:
+
+```rust
+use algochat::{AlgoChatClient, AlgorandConfig, PSKContact, PSKExchangeURI};
+
+let client = AlgoChatClient::from_seed(seed, AlgorandConfig::localnet()).await?;
+
+// Add a PSK contact (exchanged out-of-band via URI)
+let uri = PSKExchangeURI::decode("algochat-psk://v1?addr=ADDR&psk=...&label=Alice")?;
+client.add_psk_contact(&uri.address, PSKContact::new(uri.psk, uri.label)).await;
+
+// Send — counter management is automatic
+let (envelope_bytes, counter) = client.send_psk("RECIPIENT_ADDR", "Hello with PSK!").await?;
+
+// Receive — replay protection is automatic
+let text = client.receive_psk(&envelope_bytes, "SENDER_ADDR").await?;
+```
+
+### Low-Level PSK API
+
+For direct control over encryption and counters:
 
 ```rust
 use algochat::{
-    derive_keys_from_seed, encrypt_psk_message, decrypt_psk_message,
+    encrypt_psk_message, decrypt_psk_message,
     encode_psk_envelope, decode_psk_envelope, is_psk_message,
-    PSKState, PSKExchangeURI,
+    PSKState,
 };
 
-// Both parties share a 32-byte PSK (exchanged out-of-band)
 let psk = [0xAA; 32];
 let mut state = PSKState::new();
 
@@ -95,17 +131,9 @@ let envelope = encrypt_psk_message(
 // Encode for transmission
 let encoded = encode_psk_envelope(&envelope);
 
-// Check message type
-assert!(is_psk_message(&encoded));
-
 // Decode and decrypt
 let decoded = decode_psk_envelope(&encoded)?;
 let text = decrypt_psk_message(&decoded, &recipient_private, &recipient_public, &psk)?;
-
-// Exchange PSK via URI
-let uri = PSKExchangeURI::new("ALGO_ADDRESS", psk.to_vec(), Some("Alice".into()));
-let uri_string = uri.encode();
-// -> algochat-psk://v1?addr=ALGO_ADDRESS&psk=...&label=Alice
 ```
 ## Cross-Implementation Compatibility
 
