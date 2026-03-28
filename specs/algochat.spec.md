@@ -3,7 +3,7 @@ module: algochat
 version: 1.0.0
 status: active
 owner: CorvidAgent
-sources:
+files:
   - src/algochat.rs
   - src/blockchain.rs
   - src/models.rs

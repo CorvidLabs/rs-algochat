@@ -1,0 +1,6 @@
+[registry]
+name = "rs-algochat"
+
+[specs]
+algochat = "specs/algochat.spec.md"
+crypto = "specs/crypto.spec.md"
