@@ -9,6 +9,7 @@
 
 use hkdf::Hkdf;
 use sha2::Sha256;
+use zeroize::Zeroizing;
 
 use crate::psk_types::PSK_SESSION_SIZE;
 use crate::types::{AlgoChatError, Result};
@@ -77,8 +78,8 @@ pub fn derive_psk_at_counter(initial_psk: &[u8], counter: u32) -> Result<[u8; 32
     let session_index = counter / PSK_SESSION_SIZE;
     let position = counter % PSK_SESSION_SIZE;
 
-    let session_psk = derive_session_psk(initial_psk, session_index)?;
-    derive_position_psk(&session_psk, position)
+    let session_psk = Zeroizing::new(derive_session_psk(initial_psk, session_index)?);
+    derive_position_psk(&*session_psk, position)
 }
 
 /// Derives a hybrid symmetric key combining ECDH shared secret and PSK.
@@ -102,8 +103,8 @@ pub fn derive_hybrid_symmetric_key(
     sender_public_key: &[u8],
     recipient_public_key: &[u8],
 ) -> Result<[u8; 32]> {
-    // IKM = shared_secret || current_psk
-    let mut ikm = Vec::with_capacity(shared_secret.len() + current_psk.len());
+    // IKM = shared_secret || current_psk (zeroized after use)
+    let mut ikm = Zeroizing::new(Vec::with_capacity(shared_secret.len() + current_psk.len()));
     ikm.extend_from_slice(shared_secret);
     ikm.extend_from_slice(current_psk);
 
@@ -142,8 +143,10 @@ pub fn derive_sender_key(
     ephemeral_public_key: &[u8],
     sender_public_key: &[u8],
 ) -> Result<[u8; 32]> {
-    // IKM = sender_shared_secret || current_psk
-    let mut ikm = Vec::with_capacity(sender_shared_secret.len() + current_psk.len());
+    // IKM = sender_shared_secret || current_psk (zeroized after use)
+    let mut ikm = Zeroizing::new(Vec::with_capacity(
+        sender_shared_secret.len() + current_psk.len(),
+    ));
     ikm.extend_from_slice(sender_shared_secret);
     ikm.extend_from_slice(current_psk);
 

@@ -3,6 +3,7 @@
 use hkdf::Hkdf;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 use crate::types::{AlgoChatError, Result, KEY_DERIVATION_INFO, KEY_DERIVATION_SALT};
 
@@ -19,11 +20,11 @@ pub fn derive_keys_from_seed(seed: &[u8]) -> Result<(StaticSecret, PublicKey)> {
     }
 
     let hkdf = Hkdf::<Sha256>::new(Some(KEY_DERIVATION_SALT), seed);
-    let mut derived_key = [0u8; 32];
-    hkdf.expand(KEY_DERIVATION_INFO, &mut derived_key)
+    let mut derived_key = Zeroizing::new([0u8; 32]);
+    hkdf.expand(KEY_DERIVATION_INFO, &mut *derived_key)
         .expect("32 bytes is a valid length for HKDF-SHA256");
 
-    let private_key = StaticSecret::from(derived_key);
+    let private_key = StaticSecret::from(*derived_key);
     let public_key = PublicKey::from(&private_key);
 
     Ok((private_key, public_key))
