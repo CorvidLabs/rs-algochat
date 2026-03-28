@@ -144,6 +144,21 @@ pub struct AccountInfo {
     pub min_balance: u64,
 }
 
+/// Paginated transaction search result.
+///
+/// Wraps transactions with an optional `next_token` for cursor-based
+/// pagination. When `next_token` is present, more results are available.
+#[derive(Debug, Clone)]
+pub struct PaginatedTransactions {
+    /// The transactions in this page.
+    pub transactions: Vec<NoteTransaction>,
+    /// Opaque cursor for fetching the next page. `None` when no more results.
+    pub next_token: Option<String>,
+}
+
+/// Default page size for key discovery pagination.
+pub const DEFAULT_DISCOVERY_PAGE_SIZE: u32 = 100;
+
 /// Trait for interacting with an Algorand indexer.
 #[async_trait::async_trait]
 pub trait IndexerClient: Send + Sync {
@@ -169,35 +184,94 @@ pub trait IndexerClient: Send + Sync {
 
     /// Wait for a transaction to be indexed.
     async fn wait_for_indexer(&self, txid: &str, timeout_secs: u32) -> Result<NoteTransaction>;
+
+    /// Search for transactions with cursor-based pagination.
+    ///
+    /// Returns a page of transactions and an optional `next_token` for fetching
+    /// the next page. Implementations should use the Algorand indexer's native
+    /// `next-token` pagination when available.
+    ///
+    /// The default implementation falls back to `search_transactions` without
+    /// pagination support (returns all results with no next_token).
+    async fn search_transactions_paginated(
+        &self,
+        address: &str,
+        limit: Option<u32>,
+        next_token: Option<&str>,
+    ) -> Result<PaginatedTransactions> {
+        let _ = next_token; // ignored in fallback
+        let transactions = self.search_transactions(address, None, limit).await?;
+        Ok(PaginatedTransactions {
+            transactions,
+            next_token: None,
+        })
+    }
 }
 
 /// Discovers the encryption public key for an Algorand address.
 ///
-/// This searches the indexer for key announcement transactions from the address.
+/// Uses paginated search with the indexer's `next-token` cursor to walk
+/// through the full transaction history. By default searches exhaustively
+/// (max_pages = None). Callers can pass a max page count as a safety bound.
+///
 /// The key is considered verified if it was signed by the address's Ed25519 key.
 pub async fn discover_encryption_key(
     indexer: &dyn IndexerClient,
     address: &str,
 ) -> Result<Option<DiscoveredKey>> {
-    // Search for transactions from this address
-    let transactions = indexer
-        .search_transactions(address, None, Some(100))
-        .await?;
+    discover_encryption_key_paginated(indexer, address, DEFAULT_DISCOVERY_PAGE_SIZE, None).await
+}
 
-    // Look for key announcements in the note field
-    for tx in transactions {
-        if tx.sender != address {
-            continue;
+/// Discovers the encryption public key with configurable pagination.
+///
+/// - `page_size`: Number of transactions per indexer page.
+/// - `max_pages`: Maximum pages to fetch, or `None` for exhaustive search.
+pub async fn discover_encryption_key_paginated(
+    indexer: &dyn IndexerClient,
+    address: &str,
+    page_size: u32,
+    max_pages: Option<u32>,
+) -> Result<Option<DiscoveredKey>> {
+    let mut next_token: Option<String> = None;
+    let mut pages_searched: u32 = 0;
+
+    loop {
+        let result = indexer
+            .search_transactions_paginated(address, Some(page_size), next_token.as_deref())
+            .await?;
+
+        // Look for key announcements in the note field
+        for tx in &result.transactions {
+            if tx.sender != address {
+                continue;
+            }
+
+            // Check if this is a key announcement (self-transfer with note)
+            if tx.receiver != address {
+                continue;
+            }
+
+            // Try to parse as key announcement
+            if let Some(key) = parse_key_announcement(&tx.note, address) {
+                return Ok(Some(key));
+            }
         }
 
-        // Check if this is a key announcement (self-transfer with note)
-        if tx.receiver != address {
-            continue;
+        pages_searched += 1;
+
+        // Stop if no more pages or empty response
+        match result.next_token {
+            Some(token) if !result.transactions.is_empty() => {
+                next_token = Some(token);
+            }
+            _ => break,
         }
 
-        // Try to parse as key announcement
-        if let Some(key) = parse_key_announcement(&tx.note, address) {
-            return Ok(Some(key));
+        // Stop if we've hit the page limit
+        if let Some(max) = max_pages {
+            if pages_searched >= max {
+                break;
+            }
         }
     }
 
@@ -703,5 +777,292 @@ mod tests {
         let debug = format!("{:?}", info);
         assert!(debug.contains("ADDR123"));
         assert!(debug.contains("1000000"));
+    }
+
+    // MARK: - Paginated Key Discovery Tests
+
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// Mock indexer that returns pre-configured pages of results
+    struct MockPaginatedIndexer {
+        /// Pages keyed by next_token (None = first page)
+        pages: HashMap<Option<String>, PaginatedTransactions>,
+        /// Track number of search calls
+        call_count: Mutex<u32>,
+        /// Track last page size requested
+        last_limit: Mutex<Option<u32>>,
+    }
+
+    impl MockPaginatedIndexer {
+        fn new(pages: Vec<PaginatedTransactions>) -> Self {
+            let mut map = HashMap::new();
+            // First page is keyed by None
+            if let Some(first) = pages.first() {
+                map.insert(None, first.clone());
+            }
+            // Subsequent pages keyed by their preceding next_token
+            for i in 0..pages.len().saturating_sub(1) {
+                if let Some(token) = &pages[i].next_token {
+                    map.insert(Some(token.clone()), pages[i + 1].clone());
+                }
+            }
+            Self {
+                pages: map,
+                call_count: Mutex::new(0),
+                last_limit: Mutex::new(None),
+            }
+        }
+
+        fn call_count(&self) -> u32 {
+            *self.call_count.lock().unwrap()
+        }
+
+        fn last_limit(&self) -> Option<u32> {
+            *self.last_limit.lock().unwrap()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl IndexerClient for MockPaginatedIndexer {
+        async fn search_transactions(
+            &self,
+            _address: &str,
+            _after_round: Option<u64>,
+            _limit: Option<u32>,
+        ) -> crate::types::Result<Vec<NoteTransaction>> {
+            Ok(Vec::new())
+        }
+
+        async fn search_transactions_between(
+            &self,
+            _a1: &str,
+            _a2: &str,
+            _after_round: Option<u64>,
+            _limit: Option<u32>,
+        ) -> crate::types::Result<Vec<NoteTransaction>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_transaction(&self, _txid: &str) -> crate::types::Result<NoteTransaction> {
+            Err(crate::types::AlgoChatError::TransactionFailed(
+                "not found".to_string(),
+            ))
+        }
+
+        async fn wait_for_indexer(
+            &self,
+            _txid: &str,
+            _timeout: u32,
+        ) -> crate::types::Result<NoteTransaction> {
+            Err(crate::types::AlgoChatError::TransactionFailed(
+                "not found".to_string(),
+            ))
+        }
+
+        async fn search_transactions_paginated(
+            &self,
+            _address: &str,
+            limit: Option<u32>,
+            next_token: Option<&str>,
+        ) -> crate::types::Result<PaginatedTransactions> {
+            *self.call_count.lock().unwrap() += 1;
+            *self.last_limit.lock().unwrap() = limit;
+
+            let key = next_token.map(|s| s.to_string());
+            match self.pages.get(&key) {
+                Some(page) => Ok(page.clone()),
+                None => Ok(PaginatedTransactions {
+                    transactions: Vec::new(),
+                    next_token: None,
+                }),
+            }
+        }
+    }
+
+    fn make_key_tx(address: &str, key: [u8; 32]) -> NoteTransaction {
+        NoteTransaction {
+            txid: "TX-KEY".to_string(),
+            sender: address.to_string(),
+            receiver: address.to_string(),
+            note: key.to_vec(),
+            confirmed_round: 100,
+            round_time: 1700000000,
+        }
+    }
+
+    fn make_non_key_tx(address: &str, txid: &str) -> NoteTransaction {
+        NoteTransaction {
+            txid: txid.to_string(),
+            sender: address.to_string(),
+            receiver: address.to_string(),
+            note: vec![1, 2, 3], // Too short for key
+            confirmed_round: 100,
+            round_time: 1700000000,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_paginated_finds_key_on_first_page() {
+        let address = "MYADDR";
+        let key = [0xABu8; 32];
+
+        let indexer = MockPaginatedIndexer::new(vec![PaginatedTransactions {
+            transactions: vec![make_key_tx(address, key)],
+            next_token: None,
+        }]);
+
+        let result = discover_encryption_key_paginated(&indexer, address, 50, None)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().public_key, key);
+        assert_eq!(indexer.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_paginated_finds_key_on_second_page() {
+        let address = "MYADDR";
+        let key = [0xCDu8; 32];
+
+        let indexer = MockPaginatedIndexer::new(vec![
+            PaginatedTransactions {
+                transactions: vec![make_non_key_tx(address, "TX0")],
+                next_token: Some("page2".to_string()),
+            },
+            PaginatedTransactions {
+                transactions: vec![make_key_tx(address, key)],
+                next_token: None,
+            },
+        ]);
+
+        let result = discover_encryption_key_paginated(&indexer, address, 50, None)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().public_key, key);
+        assert_eq!(indexer.call_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_paginated_max_pages_limits_search() {
+        let address = "MYADDR";
+        let key = [0xEFu8; 32];
+
+        let indexer = MockPaginatedIndexer::new(vec![
+            PaginatedTransactions {
+                transactions: vec![make_non_key_tx(address, "TX0")],
+                next_token: Some("page2".to_string()),
+            },
+            PaginatedTransactions {
+                transactions: vec![make_key_tx(address, key)],
+                next_token: None,
+            },
+        ]);
+
+        // Only search 1 page — key is on page 2, should NOT find it
+        let result = discover_encryption_key_paginated(&indexer, address, 50, Some(1))
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        assert_eq!(indexer.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_paginated_exhaustive_search_all_pages() {
+        let address = "MYADDR";
+        let key = [0x42u8; 32];
+
+        let indexer = MockPaginatedIndexer::new(vec![
+            PaginatedTransactions {
+                transactions: vec![make_non_key_tx(address, "TX0")],
+                next_token: Some("p2".to_string()),
+            },
+            PaginatedTransactions {
+                transactions: vec![make_non_key_tx(address, "TX1")],
+                next_token: Some("p3".to_string()),
+            },
+            PaginatedTransactions {
+                transactions: vec![make_non_key_tx(address, "TX2")],
+                next_token: Some("p4".to_string()),
+            },
+            PaginatedTransactions {
+                transactions: vec![make_key_tx(address, key)],
+                next_token: None,
+            },
+        ]);
+
+        let result = discover_encryption_key_paginated(&indexer, address, 50, None)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().public_key, key);
+        assert_eq!(indexer.call_count(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_paginated_empty_history_returns_none() {
+        let indexer = MockPaginatedIndexer::new(vec![PaginatedTransactions {
+            transactions: Vec::new(),
+            next_token: None,
+        }]);
+
+        let result = discover_encryption_key_paginated(&indexer, "NOONE", 50, None)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_paginated_page_size_forwarded() {
+        let indexer = MockPaginatedIndexer::new(vec![PaginatedTransactions {
+            transactions: Vec::new(),
+            next_token: None,
+        }]);
+
+        let _ = discover_encryption_key_paginated(&indexer, "ADDR", 25, None).await;
+        assert_eq!(indexer.last_limit(), Some(25));
+    }
+
+    #[tokio::test]
+    async fn test_paginated_skips_other_senders() {
+        let target = "TARGET";
+        let key = [0xBBu8; 32];
+
+        // First tx is from a different sender, second is from target
+        let other_tx = NoteTransaction {
+            txid: "TX0".to_string(),
+            sender: "OTHER".to_string(),
+            receiver: "OTHER".to_string(),
+            note: vec![0xFFu8; 32],
+            confirmed_round: 100,
+            round_time: 1700000000,
+        };
+
+        let indexer = MockPaginatedIndexer::new(vec![PaginatedTransactions {
+            transactions: vec![other_tx, make_key_tx(target, key)],
+            next_token: None,
+        }]);
+
+        let result = discover_encryption_key_paginated(&indexer, target, 50, None)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().public_key, key);
+    }
+
+    #[test]
+    fn test_default_discovery_page_size() {
+        assert_eq!(DEFAULT_DISCOVERY_PAGE_SIZE, 100);
+    }
+
+    #[test]
+    fn test_paginated_transactions_debug() {
+        let pt = PaginatedTransactions {
+            transactions: Vec::new(),
+            next_token: Some("token123".to_string()),
+        };
+        let debug = format!("{:?}", pt);
+        assert!(debug.contains("token123"));
     }
 }
