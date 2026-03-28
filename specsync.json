@@ -1,0 +1,17 @@
+{
+  "excludePatterns": [
+    "**/tests/**",
+    "**/examples/**",
+    "**/benches/**"
+  ],
+  "requiredSections": [
+    "Invariants",
+    "Behavioral Examples",
+    "Error Cases",
+    "Change Log"
+  ],
+  "sourceDirs": [
+    "src"
+  ],
+  "specsDir": "specs"
+}

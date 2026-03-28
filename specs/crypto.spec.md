@@ -3,7 +3,7 @@ module: crypto
 version: 1.0.0
 status: active
 owner: CorvidAgent
-sources:
+files:
   - src/crypto.rs
   - src/keys.rs
   - src/envelope.rs
