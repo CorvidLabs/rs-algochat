@@ -12,6 +12,7 @@
 
 use crate::psk_types::{
     PSKEnvelope, PSK_ENCRYPTED_SENDER_KEY_SIZE, PSK_HEADER_SIZE, PSK_PROTOCOL_ID, PSK_VERSION,
+    PSK_VERSION_V2,
 };
 use crate::types::{AlgoChatError, Result, NONCE_SIZE, PUBLIC_KEY_SIZE};
 
@@ -24,7 +25,7 @@ use crate::types::{AlgoChatError, Result, NONCE_SIZE, PUBLIC_KEY_SIZE};
 /// A byte vector containing the encoded envelope
 pub fn encode_psk_envelope(envelope: &PSKEnvelope) -> Vec<u8> {
     let mut data = Vec::with_capacity(PSK_HEADER_SIZE + envelope.ciphertext.len());
-    data.push(PSK_VERSION);
+    data.push(envelope.version);
     data.push(PSK_PROTOCOL_ID);
     data.extend_from_slice(&envelope.ratchet_counter.to_be_bytes());
     data.extend_from_slice(&envelope.sender_public_key);
@@ -54,7 +55,7 @@ pub fn decode_psk_envelope(data: &[u8]) -> Result<PSKEnvelope> {
     let version = data[0];
     let protocol_id = data[1];
 
-    if version != PSK_VERSION {
+    if version != PSK_VERSION && version != PSK_VERSION_V2 {
         return Err(AlgoChatError::UnknownVersion(version));
     }
 
@@ -91,6 +92,7 @@ pub fn decode_psk_envelope(data: &[u8]) -> Result<PSKEnvelope> {
     let ciphertext = data[offset..].to_vec();
 
     Ok(PSKEnvelope {
+        version,
         ratchet_counter,
         sender_public_key,
         ephemeral_public_key,
@@ -111,7 +113,7 @@ pub fn is_psk_message(data: &[u8]) -> bool {
     if data.len() < PSK_HEADER_SIZE {
         return false;
     }
-    data[0] == PSK_VERSION && data[1] == PSK_PROTOCOL_ID
+    (data[0] == PSK_VERSION || data[0] == PSK_VERSION_V2) && data[1] == PSK_PROTOCOL_ID
 }
 
 #[cfg(test)]
@@ -121,6 +123,7 @@ mod tests {
     #[test]
     fn test_encode_decode_roundtrip() {
         let envelope = PSKEnvelope {
+            version: PSK_VERSION,
             ratchet_counter: 42,
             sender_public_key: [1u8; 32],
             ephemeral_public_key: [2u8; 32],
@@ -139,6 +142,7 @@ mod tests {
     #[test]
     fn test_ratchet_counter_encoding() {
         let envelope = PSKEnvelope {
+            version: PSK_VERSION,
             ratchet_counter: 0x01020304,
             sender_public_key: [0u8; 32],
             ephemeral_public_key: [0u8; 32],
@@ -180,10 +184,42 @@ mod tests {
     #[test]
     fn test_decode_wrong_version() {
         let mut data = vec![0u8; PSK_HEADER_SIZE + 16];
-        data[0] = 0x02;
+        data[0] = 0x03;
         data[1] = PSK_PROTOCOL_ID;
         let result = decode_psk_envelope(&data);
-        assert!(matches!(result, Err(AlgoChatError::UnknownVersion(0x02))));
+        assert!(matches!(result, Err(AlgoChatError::UnknownVersion(0x03))));
+    }
+
+    #[test]
+    fn test_decode_v2_version_accepted() {
+        let mut data = vec![0u8; PSK_HEADER_SIZE + 16];
+        data[0] = PSK_VERSION_V2;
+        data[1] = PSK_PROTOCOL_ID;
+        let decoded = decode_psk_envelope(&data).unwrap();
+        assert_eq!(decoded.version, PSK_VERSION_V2);
+    }
+
+    #[test]
+    fn test_is_psk_message_accepts_v2() {
+        let mut data = vec![PSK_VERSION_V2, PSK_PROTOCOL_ID];
+        data.extend(vec![0u8; PSK_HEADER_SIZE - 2]);
+        assert!(is_psk_message(&data));
+    }
+
+    #[test]
+    fn test_psk_v2_aad_layout() {
+        let envelope = PSKEnvelope {
+            version: PSK_VERSION_V2,
+            ratchet_counter: 0x01020304,
+            sender_public_key: [1u8; 32],
+            ephemeral_public_key: [2u8; 32],
+            nonce: [3u8; 12],
+            encrypted_sender_key: vec![4u8; 48],
+            ciphertext: vec![5u8; 16],
+        };
+        let aad = envelope.v2_aad();
+        assert_eq!(aad.len(), 82);
+        assert_eq!(&aad[..], &encode_psk_envelope(&envelope)[..82]);
     }
 
     #[test]
@@ -201,6 +237,7 @@ mod tests {
     #[test]
     fn test_zero_counter() {
         let envelope = PSKEnvelope {
+            version: PSK_VERSION,
             ratchet_counter: 0,
             sender_public_key: [0u8; 32],
             ephemeral_public_key: [0u8; 32],
@@ -216,6 +253,7 @@ mod tests {
     #[test]
     fn test_max_counter() {
         let envelope = PSKEnvelope {
+            version: PSK_VERSION,
             ratchet_counter: u32::MAX,
             sender_public_key: [0u8; 32],
             ephemeral_public_key: [0u8; 32],

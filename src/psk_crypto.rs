@@ -5,7 +5,7 @@
 //! must be correct to derive the message encryption key.
 
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     ChaCha20Poly1305, Nonce,
 };
 use rand::RngCore;
@@ -14,8 +14,13 @@ use zeroize::Zeroizing;
 
 use crate::keys::{generate_ephemeral_keypair, x25519_ecdh};
 use crate::psk_ratchet::{derive_hybrid_symmetric_key, derive_psk_at_counter, derive_sender_key};
-use crate::psk_types::{PSKEnvelope, PSK_MAX_PAYLOAD_SIZE};
+use crate::psk_types::{PSKEnvelope, PSK_MAX_PAYLOAD_SIZE, PSK_VERSION, PSK_VERSION_V2};
 use crate::types::{AlgoChatError, Result, NONCE_SIZE};
+
+/// Wraps a message and AAD into the `chacha20poly1305::Payload` form.
+fn payload<'a>(msg: &'a [u8], aad: &'a [u8]) -> Payload<'a, 'a> {
+    Payload { msg, aad }
+}
 
 /// Encrypts a message using the PSK protocol.
 ///
@@ -31,11 +36,58 @@ use crate::types::{AlgoChatError, Result, NONCE_SIZE};
 /// A PSKEnvelope containing the encrypted message
 pub fn encrypt_psk_message(
     plaintext: &str,
+    sender_private_key: &StaticSecret,
+    sender_public_key: &PublicKey,
+    recipient_public_key: &PublicKey,
+    initial_psk: &[u8],
+    ratchet_counter: u32,
+) -> Result<PSKEnvelope> {
+    encrypt_psk_message_versioned(
+        plaintext,
+        sender_private_key,
+        sender_public_key,
+        recipient_public_key,
+        initial_psk,
+        ratchet_counter,
+        PSK_VERSION,
+    )
+}
+
+/// Encrypts a message using the PSK protocol v2 (AEAD header binding).
+///
+/// Identical to [`encrypt_psk_message`] except the emitted envelope has
+/// `version = 0x02` and both AEAD operations bind the PSK header metadata prefix
+/// as Associated Data (version, protocol id, ratchet counter, public keys, nonce).
+#[allow(clippy::too_many_arguments)]
+pub fn encrypt_psk_message_v2(
+    plaintext: &str,
+    sender_private_key: &StaticSecret,
+    sender_public_key: &PublicKey,
+    recipient_public_key: &PublicKey,
+    initial_psk: &[u8],
+    ratchet_counter: u32,
+) -> Result<PSKEnvelope> {
+    encrypt_psk_message_versioned(
+        plaintext,
+        sender_private_key,
+        sender_public_key,
+        recipient_public_key,
+        initial_psk,
+        ratchet_counter,
+        PSK_VERSION_V2,
+    )
+}
+
+/// Encrypts a PSK message, selecting the wire version explicitly.
+#[allow(clippy::too_many_arguments)]
+fn encrypt_psk_message_versioned(
+    plaintext: &str,
     _sender_private_key: &StaticSecret,
     sender_public_key: &PublicKey,
     recipient_public_key: &PublicKey,
     initial_psk: &[u8],
     ratchet_counter: u32,
+    version: u8,
 ) -> Result<PSKEnvelope> {
     let message_bytes = plaintext.as_bytes();
 
@@ -70,11 +122,28 @@ pub fn encrypt_psk_message(
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
+    // Pre-build the envelope so the v2 AAD can be derived from its header prefix.
+    // On v1 the AAD is empty (unchanged behavior).
+    let mut envelope = PSKEnvelope {
+        version,
+        ratchet_counter,
+        sender_public_key: *sender_pub_bytes,
+        ephemeral_public_key: *ephemeral_pub_bytes,
+        nonce: nonce_bytes,
+        encrypted_sender_key: Vec::new(),
+        ciphertext: Vec::new(),
+    };
+    let aad: Vec<u8> = if version == PSK_VERSION_V2 {
+        envelope.v2_aad()
+    } else {
+        Vec::new()
+    };
+
     // Encrypt message
     let cipher = ChaCha20Poly1305::new_from_slice(&*symmetric_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("PSK cipher init failed: {}", e)))?;
     let ciphertext = cipher
-        .encrypt(nonce, message_bytes)
+        .encrypt(nonce, payload(message_bytes, &aad))
         .map_err(|e| AlgoChatError::EncryptionError(format!("PSK encryption failed: {}", e)))?;
 
     // Encrypt the symmetric key for sender (bidirectional decryption)
@@ -90,19 +159,14 @@ pub fn encrypt_psk_message(
         AlgoChatError::EncryptionError(format!("PSK sender cipher init failed: {}", e))
     })?;
     let encrypted_sender_key = sender_cipher
-        .encrypt(nonce, symmetric_key.as_slice())
+        .encrypt(nonce, payload(symmetric_key.as_slice(), &aad))
         .map_err(|e| {
             AlgoChatError::EncryptionError(format!("PSK sender key encryption failed: {}", e))
         })?;
 
-    Ok(PSKEnvelope {
-        ratchet_counter,
-        sender_public_key: *sender_pub_bytes,
-        ephemeral_public_key: *ephemeral_pub_bytes,
-        nonce: nonce_bytes,
-        encrypted_sender_key,
-        ciphertext,
-    })
+    envelope.encrypted_sender_key = encrypted_sender_key;
+    envelope.ciphertext = ciphertext;
+    Ok(envelope)
 }
 
 /// Decrypts a PSK message envelope.
@@ -133,10 +197,18 @@ pub fn decrypt_psk_message(
         envelope.ratchet_counter,
     )?);
 
-    let plaintext = if we_are_sender {
-        decrypt_psk_as_sender(envelope, my_private_key, my_pub_bytes, &*current_psk)?
+    // Branch on the version byte: v1 uses empty AAD; v2 reconstructs the header
+    // metadata AAD from the received header bytes.
+    let aad: Vec<u8> = if envelope.version == PSK_VERSION_V2 {
+        envelope.v2_aad()
     } else {
-        decrypt_psk_as_recipient(envelope, my_private_key, my_pub_bytes, &*current_psk)?
+        Vec::new()
+    };
+
+    let plaintext = if we_are_sender {
+        decrypt_psk_as_sender(envelope, my_private_key, my_pub_bytes, &*current_psk, &aad)?
+    } else {
+        decrypt_psk_as_recipient(envelope, my_private_key, my_pub_bytes, &*current_psk, &aad)?
     };
 
     let text = std::str::from_utf8(&plaintext)
@@ -151,6 +223,7 @@ fn decrypt_psk_as_recipient(
     recipient_private_key: &StaticSecret,
     recipient_pub_bytes: &[u8; 32],
     current_psk: &[u8],
+    aad: &[u8],
 ) -> Result<Vec<u8>> {
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
@@ -172,7 +245,7 @@ fn decrypt_psk_as_recipient(
     let nonce = Nonce::from_slice(&envelope.nonce);
 
     cipher
-        .decrypt(nonce, envelope.ciphertext.as_slice())
+        .decrypt(nonce, payload(envelope.ciphertext.as_slice(), aad))
         .map_err(|e| AlgoChatError::DecryptionError(format!("PSK decryption failed: {}", e)))
 }
 
@@ -182,6 +255,7 @@ fn decrypt_psk_as_sender(
     sender_private_key: &StaticSecret,
     sender_pub_bytes: &[u8; 32],
     current_psk: &[u8],
+    aad: &[u8],
 ) -> Result<Vec<u8>> {
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
@@ -203,7 +277,10 @@ fn decrypt_psk_as_sender(
 
     let symmetric_key = Zeroizing::new(
         sender_cipher
-            .decrypt(nonce, envelope.encrypted_sender_key.as_slice())
+            .decrypt(
+                nonce,
+                payload(envelope.encrypted_sender_key.as_slice(), aad),
+            )
             .map_err(|e| {
                 AlgoChatError::DecryptionError(format!("PSK sender key decryption failed: {}", e))
             })?,
@@ -215,7 +292,7 @@ fn decrypt_psk_as_sender(
     })?;
 
     cipher
-        .decrypt(nonce, envelope.ciphertext.as_slice())
+        .decrypt(nonce, payload(envelope.ciphertext.as_slice(), aad))
         .map_err(|e| {
             AlgoChatError::DecryptionError(format!("PSK message decryption failed: {}", e))
         })
@@ -377,6 +454,50 @@ mod tests {
         assert_eq!(decrypted, message);
     }
 
+    #[test]
+    fn test_v2_encrypt_decrypt_roundtrip() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+        let psk = test_psk();
+
+        let message = "Hello PSK v2!";
+
+        let envelope =
+            encrypt_psk_message_v2(message, &alice_private, &alice_public, &bob_public, &psk, 7)
+                .unwrap();
+        assert_eq!(envelope.version, PSK_VERSION_V2);
+        assert_eq!(envelope.ratchet_counter, 7);
+
+        let decrypted = decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk).unwrap();
+        assert_eq!(decrypted, message);
+
+        let self_dec = decrypt_psk_message(&envelope, &alice_private, &alice_public, &psk).unwrap();
+        assert_eq!(self_dec, message);
+    }
+
+    #[test]
+    fn test_v2_header_tamper_fails() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+        let psk = test_psk();
+
+        let mut envelope = encrypt_psk_message_v2(
+            "tamper psk",
+            &alice_private,
+            &alice_public,
+            &bob_public,
+            &psk,
+            3,
+        )
+        .unwrap();
+
+        // Flip a bit in the ratchet counter, which is bound by the PSK v2 AAD.
+        envelope.ratchet_counter ^= 0x01;
+
+        let result = decrypt_psk_message(&envelope, &bob_private, &bob_public, &psk);
+        assert!(result.is_err());
+    }
+
     /// Protocol spec Test Case 4.3: PSK Encryption Round-Trip with known vectors
     #[test]
     fn test_spec_vector_4_3_psk_encryption_roundtrip() {
@@ -450,6 +571,7 @@ mod tests {
 
         // Build envelope and verify wire format
         let envelope = PSKEnvelope {
+            version: PSK_VERSION,
             ratchet_counter,
             sender_public_key: *sender_public.as_bytes(),
             ephemeral_public_key: *ephemeral_public.as_bytes(),

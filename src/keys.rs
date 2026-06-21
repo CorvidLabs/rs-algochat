@@ -22,7 +22,7 @@ pub fn derive_keys_from_seed(seed: &[u8]) -> Result<(StaticSecret, PublicKey)> {
     let hkdf = Hkdf::<Sha256>::new(Some(KEY_DERIVATION_SALT), seed);
     let mut derived_key = Zeroizing::new([0u8; 32]);
     hkdf.expand(KEY_DERIVATION_INFO, &mut *derived_key)
-        .expect("32 bytes is a valid length for HKDF-SHA256");
+        .map_err(|e| AlgoChatError::KeyDerivationFailed(format!("HKDF expand failed: {}", e)))?;
 
     let private_key = StaticSecret::from(*derived_key);
     let public_key = PublicKey::from(&private_key);

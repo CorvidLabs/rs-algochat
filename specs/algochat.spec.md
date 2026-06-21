@@ -27,6 +27,7 @@ Configuration for the AlgoChat client.
 | `auto_discover_keys` | `bool` | `true` | Auto-discover recipient encryption keys |
 | `cache_public_keys` | `bool` | `true` | Cache discovered public keys |
 | `cache_messages` | `bool` | `true` | Cache messages locally |
+| `require_verified_keys` | `bool` | `false` | Deployment intent to refuse unverified keys (proposal 0001); enforcement via `discover_verified_key` |
 
 Methods:
 - `fn new(network: AlgorandConfig) -> Self` - Creates config with defaults.
@@ -317,10 +318,19 @@ Decrypts envelope bytes. Validates it's an AlgoChat message first. Returns `Decr
 ### Key Discovery
 
 #### `async fn discover_key(&self, address: &str) -> Result<Option<DiscoveredKey>>`
-Discovers the encryption public key for an address.
-1. Checks `PublicKeyCache` first (if caching enabled). Cached keys are returned as `is_verified: true`.
+Discovers the encryption public key for an address. Lenient accessor: never
+enforces verification.
+1. Checks `PublicKeyCache` first (if caching enabled). Cached keys carry their real `is_verified` value (no longer hardcoded as verified, per proposal 0001).
 2. Falls back to indexer search via `discover_encryption_key()`.
-3. Caches discovered keys (if caching enabled).
+3. Caches discovered keys with their real verification status (if caching enabled).
+
+#### `async fn discover_verified_key(&self, address: &str) -> Result<DiscoveredKey>`
+Strict identity accessor (proposal 0001). Returns the discovered key only when it
+was cryptographically verified against the address-derived Ed25519 key; an
+unverified key yields `InvalidSignature` and a missing key yields
+`PublicKeyNotFound`. The `AlgoChatConfig::require_verified_keys` flag (default
+`false`) documents the deployment intent to enforce verification; this accessor
+makes enforcement available without changing `discover_key`'s default behavior.
 
 ### Message Processing
 
@@ -371,7 +381,7 @@ Standalone function that searches for key announcement transactions:
 5. `PublicKeyCache` entries expire after the configured TTL; `retrieve` returns `None` for expired entries.
 6. Key announcements are self-transfers (sender == receiver) with note >= 32 bytes.
 7. A key announcement with 96+ byte note includes an Ed25519 signature over the X25519 key at bytes [32..96].
-8. `discover_key` returns cached keys as `is_verified: true` (trust-on-first-use).
+8. `discover_key` preserves each key's real `is_verified` value, including for cached keys (proposal 0001); it is `true` only for a successfully verified signed announcement. `discover_verified_key` errors on unverified or missing keys so callers can refuse them.
 9. `process_transaction` ignores transactions where neither sender nor receiver matches our address.
 10. `process_transaction` ignores non-AlgoChat messages (those failing `is_chat_message` check).
 11. The send queue rejects new messages when full (`max_queue_size`), after attempting to prune exhausted failures.
@@ -427,10 +437,11 @@ Then message_count remains 1 (no duplicate)
 ### Key Discovery Flow
 
 ```
-Given Bob has published a self-transfer transaction with his X25519 key in the note
+Given Bob has published an unsigned self-transfer transaction with his X25519 key in the note
 When Alice calls discover_key("BOB_ADDR")
-Then she receives Some(DiscoveredKey) with Bob's public key
-And a second call returns the cached key with is_verified=true
+Then she receives Some(DiscoveredKey) with Bob's public key and is_verified=false
+And a second call returns the cached key, still with is_verified=false (the real status is preserved)
+And discover_verified_key("BOB_ADDR") returns an InvalidSignature error for the unverified key
 ```
 
 ### Sync New Messages

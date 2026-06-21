@@ -1,7 +1,7 @@
 //! Encryption and decryption for AlgoChat messages.
 
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     ChaCha20Poly1305, Nonce,
 };
 use hkdf::Hkdf;
@@ -14,8 +14,32 @@ use crate::envelope::ChatEnvelope;
 use crate::keys::{generate_ephemeral_keypair, x25519_ecdh};
 use crate::types::{
     AlgoChatError, DecryptedContent, Result, ENCRYPTION_INFO_PREFIX, MAX_PAYLOAD_SIZE, NONCE_SIZE,
-    PROTOCOL_ID, PROTOCOL_VERSION, SENDER_KEY_INFO_PREFIX,
+    PROTOCOL_ID, PROTOCOL_VERSION, PROTOCOL_VERSION_V2, SENDER_KEY_INFO_PREFIX,
+    STANDARD_V2_AAD_LEN,
 };
+
+/// Builds the v2 AEAD Associated Data (header metadata prefix) from raw fields.
+///
+/// Mirrors [`ChatEnvelope::v2_aad`] but is usable before the envelope struct is
+/// assembled (i.e. during encryption).
+fn standard_v2_aad(
+    sender_pub: &[u8; 32],
+    ephemeral_pub: &[u8; 32],
+    nonce: &[u8; NONCE_SIZE],
+) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(STANDARD_V2_AAD_LEN);
+    aad.push(PROTOCOL_VERSION_V2);
+    aad.push(PROTOCOL_ID);
+    aad.extend_from_slice(sender_pub);
+    aad.extend_from_slice(ephemeral_pub);
+    aad.extend_from_slice(nonce);
+    aad
+}
+
+/// Wraps a message and AAD into the `chacha20poly1305::Payload` form.
+fn payload<'a>(msg: &'a [u8], aad: &'a [u8]) -> Payload<'a, 'a> {
+    Payload { msg, aad }
+}
 
 /// Encrypt a message for a recipient.
 ///
@@ -29,9 +53,50 @@ use crate::types::{
 /// ChatEnvelope containing the encrypted message
 pub fn encrypt_message(
     plaintext: &str,
+    sender_private_key: &StaticSecret,
+    sender_public_key: &PublicKey,
+    recipient_public_key: &PublicKey,
+) -> Result<ChatEnvelope> {
+    encrypt_message_versioned(
+        plaintext,
+        sender_private_key,
+        sender_public_key,
+        recipient_public_key,
+        PROTOCOL_VERSION,
+    )
+}
+
+/// Encrypt a message for a recipient using protocol v2 (AEAD header binding).
+///
+/// Identical to [`encrypt_message`] except the emitted envelope has
+/// `version = 0x02` and both AEAD operations bind the header metadata prefix as
+/// Associated Data, authenticating the version, protocol id, public keys, and
+/// nonce against in-transit tampering.
+pub fn encrypt_message_v2(
+    plaintext: &str,
+    sender_private_key: &StaticSecret,
+    sender_public_key: &PublicKey,
+    recipient_public_key: &PublicKey,
+) -> Result<ChatEnvelope> {
+    encrypt_message_versioned(
+        plaintext,
+        sender_private_key,
+        sender_public_key,
+        recipient_public_key,
+        PROTOCOL_VERSION_V2,
+    )
+}
+
+/// Encrypt a message, selecting the wire version explicitly.
+///
+/// `version` must be either [`PROTOCOL_VERSION`] (v1, empty AAD) or
+/// [`PROTOCOL_VERSION_V2`] (v2, header AAD).
+fn encrypt_message_versioned(
+    plaintext: &str,
     _sender_private_key: &StaticSecret,
     sender_public_key: &PublicKey,
     recipient_public_key: &PublicKey,
+    version: u8,
 ) -> Result<ChatEnvelope> {
     let message_bytes = plaintext.as_bytes();
 
@@ -65,11 +130,19 @@ pub fn encrypt_message(
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
+    // On v2, both AEAD operations bind the header metadata prefix as AAD.
+    // On v1, AAD is empty (unchanged behavior).
+    let aad: Vec<u8> = if version == PROTOCOL_VERSION_V2 {
+        standard_v2_aad(sender_pub_bytes, ephemeral_pub_bytes, &nonce_bytes)
+    } else {
+        Vec::new()
+    };
+
     // Encrypt message
     let cipher = ChaCha20Poly1305::new_from_slice(&*symmetric_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Cipher init failed: {}", e)))?;
     let ciphertext = cipher
-        .encrypt(nonce, message_bytes)
+        .encrypt(nonce, payload(message_bytes, &aad))
         .map_err(|e| AlgoChatError::EncryptionError(format!("Encryption failed: {}", e)))?;
 
     // Encrypt the symmetric key for sender (bidirectional decryption)
@@ -88,13 +161,13 @@ pub fn encrypt_message(
     let sender_cipher = ChaCha20Poly1305::new_from_slice(&*sender_encryption_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Sender cipher init failed: {}", e)))?;
     let encrypted_sender_key = sender_cipher
-        .encrypt(nonce, symmetric_key.as_slice())
+        .encrypt(nonce, payload(symmetric_key.as_slice(), &aad))
         .map_err(|e| {
             AlgoChatError::EncryptionError(format!("Sender key encryption failed: {}", e))
         })?;
 
     Ok(ChatEnvelope {
-        version: PROTOCOL_VERSION,
+        version,
         protocol_id: PROTOCOL_ID,
         sender_public_key: *sender_pub_bytes,
         ephemeral_public_key: *ephemeral_pub_bytes,
@@ -121,10 +194,19 @@ pub fn decrypt_message(
     let my_pub_bytes = my_public_key.as_bytes();
     let we_are_sender = my_pub_bytes == &envelope.sender_public_key;
 
-    let plaintext = if we_are_sender {
-        decrypt_as_sender(envelope, my_private_key, my_pub_bytes)?
+    // Branch on the version byte: v1 uses empty AAD (unchanged); v2 reconstructs
+    // the header metadata AAD from the received header bytes. A header tampered in
+    // transit fails the tag on v2.
+    let aad: Vec<u8> = if envelope.version == PROTOCOL_VERSION_V2 {
+        envelope.v2_aad()
     } else {
-        decrypt_as_recipient(envelope, my_private_key, my_pub_bytes)?
+        Vec::new()
+    };
+
+    let plaintext = if we_are_sender {
+        decrypt_as_sender(envelope, my_private_key, my_pub_bytes, &aad)?
+    } else {
+        decrypt_as_recipient(envelope, my_private_key, my_pub_bytes, &aad)?
     };
 
     // Check for key-publish payload
@@ -139,6 +221,7 @@ fn decrypt_as_recipient(
     envelope: &ChatEnvelope,
     recipient_private_key: &StaticSecret,
     recipient_pub_bytes: &[u8; 32],
+    aad: &[u8],
 ) -> Result<Vec<u8>> {
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
@@ -160,7 +243,7 @@ fn decrypt_as_recipient(
     let nonce = Nonce::from_slice(&envelope.nonce);
 
     cipher
-        .decrypt(nonce, envelope.ciphertext.as_slice())
+        .decrypt(nonce, payload(envelope.ciphertext.as_slice(), aad))
         .map_err(|e| AlgoChatError::DecryptionError(format!("Decryption failed: {}", e)))
 }
 
@@ -168,6 +251,7 @@ fn decrypt_as_sender(
     envelope: &ChatEnvelope,
     sender_private_key: &StaticSecret,
     sender_pub_bytes: &[u8; 32],
+    aad: &[u8],
 ) -> Result<Vec<u8>> {
     let ephemeral_public = PublicKey::from(envelope.ephemeral_public_key);
 
@@ -190,7 +274,10 @@ fn decrypt_as_sender(
 
     let symmetric_key = Zeroizing::new(
         sender_cipher
-            .decrypt(nonce, envelope.encrypted_sender_key.as_slice())
+            .decrypt(
+                nonce,
+                payload(envelope.encrypted_sender_key.as_slice(), aad),
+            )
             .map_err(|e| {
                 AlgoChatError::DecryptionError(format!("Sender key decryption failed: {}", e))
             })?,
@@ -202,7 +289,7 @@ fn decrypt_as_sender(
     })?;
 
     cipher
-        .decrypt(nonce, envelope.ciphertext.as_slice())
+        .decrypt(nonce, payload(envelope.ciphertext.as_slice(), aad))
         .map_err(|e| AlgoChatError::DecryptionError(format!("Message decryption failed: {}", e)))
 }
 
@@ -419,6 +506,73 @@ mod tests {
             .unwrap();
 
         assert_eq!(decrypted.text, message);
+    }
+
+    #[test]
+    fn test_v2_encrypt_decrypt_roundtrip() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+
+        let message = "Hello from Rust v2!";
+
+        let envelope =
+            encrypt_message_v2(message, &alice_private, &alice_public, &bob_public).unwrap();
+        assert_eq!(envelope.version, PROTOCOL_VERSION_V2);
+
+        let decrypted = decrypt_message(&envelope, &bob_private, &bob_public)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decrypted.text, message);
+
+        // Sender can also decrypt their own v2 message.
+        let self_dec = decrypt_message(&envelope, &alice_private, &alice_public)
+            .unwrap()
+            .unwrap();
+        assert_eq!(self_dec.text, message);
+    }
+
+    #[test]
+    fn test_v2_header_tamper_fails() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+
+        let mut envelope =
+            encrypt_message_v2("tamper me", &alice_private, &alice_public, &bob_public).unwrap();
+
+        // Flip a bit in a header field bound by the AAD (sender_public_key).
+        envelope.sender_public_key[0] ^= 0x01;
+
+        // Decryption must fail because the AAD no longer matches.
+        let result = decrypt_message(&envelope, &bob_private, &bob_public);
+        assert!(matches!(result, Err(AlgoChatError::DecryptionError(_))));
+    }
+
+    #[test]
+    fn test_v2_version_tamper_fails() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+
+        let mut envelope =
+            encrypt_message_v2("downgrade", &alice_private, &alice_public, &bob_public).unwrap();
+
+        // Downgrade the version byte to v1: the AAD is then reconstructed as empty,
+        // which does not match the v2 AAD used at encryption time.
+        envelope.version = PROTOCOL_VERSION;
+
+        let result = decrypt_message(&envelope, &bob_private, &bob_public);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_v1_and_v2_ciphertexts_differ() {
+        let (alice_private, alice_public) = alice_keys();
+        let (_, bob_public) = bob_keys();
+
+        let v1 = encrypt_message("same text", &alice_private, &alice_public, &bob_public).unwrap();
+        let v2 =
+            encrypt_message_v2("same text", &alice_private, &alice_public, &bob_public).unwrap();
+        assert_eq!(v1.version, PROTOCOL_VERSION);
+        assert_eq!(v2.version, PROTOCOL_VERSION_V2);
     }
 
     #[test]
