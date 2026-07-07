@@ -1,11 +1,10 @@
 //! Encryption and decryption for AlgoChat messages.
 
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, Payload},
+    aead::{Aead, AeadCore, KeyInit, Payload},
     ChaCha20Poly1305, Nonce,
 };
 use hkdf::Hkdf;
-use rand::RngCore;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -125,10 +124,9 @@ fn encrypt_message_versioned(
     hkdf.expand(&info, &mut *symmetric_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("HKDF expand failed: {}", e)))?;
 
-    // Generate random nonce
-    let mut nonce_bytes = [0u8; NONCE_SIZE];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    // Generate a random nonce using the AEAD's CSPRNG-backed helper.
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut rand::thread_rng());
+    let nonce_bytes: [u8; NONCE_SIZE] = nonce.into();
 
     // On v2, both AEAD operations bind the header metadata prefix as AAD.
     // On v1, AAD is empty (unchanged behavior).
@@ -142,7 +140,7 @@ fn encrypt_message_versioned(
     let cipher = ChaCha20Poly1305::new_from_slice(&*symmetric_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Cipher init failed: {}", e)))?;
     let ciphertext = cipher
-        .encrypt(nonce, payload(message_bytes, &aad))
+        .encrypt(&nonce, payload(message_bytes, &aad))
         .map_err(|e| AlgoChatError::EncryptionError(format!("Encryption failed: {}", e)))?;
 
     // Encrypt the symmetric key for sender (bidirectional decryption)
@@ -161,7 +159,7 @@ fn encrypt_message_versioned(
     let sender_cipher = ChaCha20Poly1305::new_from_slice(&*sender_encryption_key)
         .map_err(|e| AlgoChatError::EncryptionError(format!("Sender cipher init failed: {}", e)))?;
     let encrypted_sender_key = sender_cipher
-        .encrypt(nonce, payload(symmetric_key.as_slice(), &aad))
+        .encrypt(&nonce, payload(symmetric_key.as_slice(), &aad))
         .map_err(|e| {
             AlgoChatError::EncryptionError(format!("Sender key encryption failed: {}", e))
         })?;

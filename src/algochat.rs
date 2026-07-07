@@ -407,11 +407,16 @@ where
             (contact.psk.clone(), counter)
         };
 
-        // Discover recipient key
-        let discovered = self
-            .discover_key(address)
-            .await?
-            .ok_or_else(|| AlgoChatError::PublicKeyNotFound(address.to_string()))?;
+        // Discover recipient key, honoring the identity-verification policy.
+        // With `require_verified_keys`, refuse to encrypt to an unverified
+        // identity by taking the strict discovery path (proposal 0001).
+        let discovered = if self.config.require_verified_keys {
+            self.discover_verified_key(address).await?
+        } else {
+            self.discover_key(address)
+                .await?
+                .ok_or_else(|| AlgoChatError::PublicKeyNotFound(address.to_string()))?
+        };
 
         let encrypted = self.encrypt_psk(message, &discovered.public_key, &psk, counter)?;
         Ok((encrypted, counter))
@@ -1410,6 +1415,47 @@ mod tests {
         let alice = make_alice_client(MockIndexer::new()).await;
         let result = alice.send_psk(BOB_ADDR, "hello").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_psk_require_verified_rejects_unverified() {
+        let bob_key = {
+            let (_, pub_key) = derive_keys_from_seed(&BOB_SEED).unwrap();
+            *pub_key.as_bytes()
+        };
+
+        // Unsigned announcement -> discovered key is unverified.
+        let indexer = MockIndexer::with_transactions(vec![NoteTransaction {
+            txid: "KEY_ANNOUNCE".to_string(),
+            sender: BOB_ADDR.to_string(),
+            receiver: BOB_ADDR.to_string(),
+            note: bob_key.to_vec(),
+            confirmed_round: 50,
+            round_time: 1700000000,
+        }]);
+
+        let mut config = AlgoChatConfig::testnet();
+        config.require_verified_keys = true;
+
+        let alice = AlgoChat::from_seed(
+            &ALICE_SEED,
+            ALICE_ADDR,
+            config,
+            MockAlgod::new(),
+            indexer,
+            InMemoryKeyStorage::new(),
+            InMemoryMessageCache::new(),
+        )
+        .await
+        .unwrap();
+        alice
+            .add_psk_contact(BOB_ADDR, &TEST_PSK, None)
+            .await
+            .unwrap();
+
+        // With verification required, sending to an unverified identity is refused.
+        let result = alice.send_psk(BOB_ADDR, "hello").await;
+        assert!(matches!(result, Err(AlgoChatError::InvalidSignature(_))));
     }
 
     #[tokio::test]
