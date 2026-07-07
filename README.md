@@ -4,6 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/algochat)](https://crates.io/crates/algochat)
 [![License](https://img.shields.io/github/license/CorvidLabs/rs-algochat)](https://github.com/CorvidLabs/rs-algochat/blob/main/LICENSE)
 [![Version](https://img.shields.io/github/v/release/CorvidLabs/rs-algochat?display_name=tag)](https://github.com/CorvidLabs/rs-algochat/releases)
+![spec coverage](https://img.shields.io/endpoint?url=https://corvidlabs.github.io/rs-algochat/badges/coverage.json)
 
 > **Pre-1.0 Notice**: This library is under active development. The API may change between minor versions until 1.0.
 

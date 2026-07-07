@@ -1,0 +1,97 @@
+# Atlas spec coverage
+#
+# Renders this repo's spec-coverage badges + cards with atlas and publishes them
+# to GitHub Pages on every push, so the README badge and the CorvidLabs coverage
+# board (https://corvidlabs.xyz/atlas/dashboard/) stay live.
+#
+# One-time setup:
+#   1. Enable Pages: Settings -> Pages -> Source: "GitHub Actions".
+#   2. Add a .atlasignore to scope coverage to your real source (exclude
+#      node_modules, dist, generated code, vendored deps). See the atlas README:
+#      https://github.com/CorvidLabs/fledge-plugin-atlas
+#   3. Add the badge to your README:
+#      ![spec coverage](https://img.shields.io/endpoint?url=https://corvidlabs.github.io/rs-algochat/badges/coverage.json)
+
+name: Atlas spec coverage
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'specs/**'
+      - '.atlasignore'
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+# Run the bundled Node-20 JavaScript actions on Node 24 to silence GitHub's
+# Node-20 end-of-life deprecation warnings.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  atlas:
+    name: Render coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }   # atlas reads git history for activity
+
+      # Cache the compiled fledge-atlas CLI so this is a fast no-op on a cache
+      # hit instead of a ~3-5 min cargo build. Keyed to the exact commit the `v1`
+      # tag resolves to, so moving v1 invalidates the cache automatically.
+      - name: Resolve pinned atlas commit (cache key)
+        id: atlasref
+        run: echo "sha=$(git ls-remote https://github.com/CorvidLabs/fledge-plugin-atlas v1 | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the fledge-atlas CLI
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/fledge-atlas
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: fledge-atlas-${{ runner.os }}-${{ steps.atlasref.outputs.sha }}
+
+      - name: Render atlas coverage badges
+        uses: CorvidLabs/fledge-plugin-atlas@v1
+        with:
+          path: .
+          output-dir: _site/badges
+          components: "coverage langmix treemap sunburst"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: atlas
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
+    steps:
+      # GitHub Pages' backend occasionally returns a transient "Deployment failed,
+      # try again later". Attempt once, then retry once so a flake does not leave
+      # the badges stale until the next push.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Deploy to GitHub Pages (retry transient failures)
+        id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
+        uses: actions/deploy-pages@v4

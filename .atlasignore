@@ -1,0 +1,6 @@
+# Atlas scope: measure real library source under src/ only.
+# Exclude build output, examples, integration tests, and helper scripts.
+target/
+examples/
+tests/
+scripts/
