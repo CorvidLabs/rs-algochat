@@ -1,0 +1,42 @@
+name: Release
+
+# Publishes the crate to crates.io on a version tag (e.g. v0.3.0), using
+# crates.io OIDC trusted publishing. No stored CARGO_REGISTRY_TOKEN is required:
+# a short-lived token is minted via the GitHub OIDC identity.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # Required for crates.io OIDC trusted publishing.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify build
+        run: cargo build --release --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Authenticate to crates.io (OIDC)
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

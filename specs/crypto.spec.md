@@ -36,11 +36,12 @@ Methods:
 - `fn new(text: impl Into<String>) -> Self` - Creates a `DecryptedContent` with text only (no reply context).
 
 ### `ChatEnvelope`
-Standard AlgoChat message envelope (protocol v1, protocol ID 0x01).
+Standard AlgoChat message envelope (protocol ID 0x01). Supports protocol version
+`0x01` (v1) and `0x02` (v2, AEAD header binding per proposal 0001).
 
 | Field | Type | Size | Description |
 |-------|------|------|-------------|
-| `version` | `u8` | 1 | Protocol version (0x01) |
+| `version` | `u8` | 1 | Protocol version (0x01 = v1, 0x02 = v2) |
 | `protocol_id` | `u8` | 1 | Protocol ID (0x01) |
 | `sender_public_key` | `[u8; 32]` | 32 | Sender's X25519 public key |
 | `ephemeral_public_key` | `[u8; 32]` | 32 | Per-message ephemeral X25519 key |
@@ -50,19 +51,25 @@ Standard AlgoChat message envelope (protocol v1, protocol ID 0x01).
 
 Methods:
 - `fn encode(&self) -> Vec<u8>` - Serializes the envelope to bytes (126-byte header + ciphertext).
-- `fn decode(data: &[u8]) -> Result<Self>` - Deserializes bytes into an envelope. Validates version and protocol ID.
+- `fn decode(data: &[u8]) -> Result<Self>` - Deserializes bytes into an envelope. Accepts version `0x01` or `0x02`; validates protocol ID.
+- `fn v2_aad(&self) -> Vec<u8>` - Builds the v2 AEAD Associated Data: the 78-byte header metadata prefix (`version ‖ protocol_id ‖ sender_public_key ‖ ephemeral_public_key ‖ nonce`). See proposal 0001.
 
 ### `PSKEnvelope`
-PSK protocol message envelope (protocol v1, protocol ID 0x02).
+PSK protocol message envelope (protocol ID 0x02). Supports version `0x01` (v1)
+and `0x02` (v2, AEAD header binding per proposal 0001).
 
 | Field | Type | Size | Description |
 |-------|------|------|-------------|
+| `version` | `u8` | 1 | Protocol version (0x01 = v1, 0x02 = v2) |
 | `ratchet_counter` | `u32` | 4 | Ratchet counter (big-endian in wire format) |
 | `sender_public_key` | `[u8; 32]` | 32 | Sender's X25519 public key |
 | `ephemeral_public_key` | `[u8; 32]` | 32 | Per-message ephemeral X25519 key |
 | `nonce` | `[u8; 12]` | 12 | ChaCha20-Poly1305 nonce |
 | `encrypted_sender_key` | `Vec<u8>` | 48 | Encrypted symmetric key for sender decryption |
 | `ciphertext` | `Vec<u8>` | variable | Encrypted message + 16-byte auth tag |
+
+Methods:
+- `fn v2_aad(&self) -> Vec<u8>` - Builds the v2 AEAD Associated Data: the 82-byte PSK header metadata prefix (`version ‖ protocol_id ‖ ratchet_counter ‖ sender_public_key ‖ ephemeral_public_key ‖ nonce`). See proposal 0001.
 
 ### `PSKExchangeURI`
 Parsed PSK exchange URI for out-of-band key sharing.
@@ -137,9 +144,19 @@ Encrypts a message for a recipient using ephemeral ECDH + ChaCha20-Poly1305.
 6. Derives a sender key via ECDH(ephemeral_private, sender_public) + HKDF-SHA256 for bidirectional decryption.
 7. Encrypts the symmetric key with the sender key (same nonce).
 
+On v1, both AEAD operations use empty Associated Data (unchanged).
+
+#### `encrypt_message_v2(plaintext: &str, sender_private_key: &StaticSecret, sender_public_key: &PublicKey, recipient_public_key: &PublicKey) -> Result<ChatEnvelope>`
+Identical to `encrypt_message` except the emitted envelope has `version = 0x02`
+and both AEAD operations bind the 78-byte header metadata prefix as Associated
+Data (`ChatEnvelope::v2_aad`). This authenticates version, protocol id, public
+keys, and nonce, defeating in-transit header tampering and version downgrade. See
+proposal 0001.
+
 #### `decrypt_message(envelope: &ChatEnvelope, my_private_key: &StaticSecret, my_public_key: &PublicKey) -> Result<Option<DecryptedContent>>`
 Decrypts a message from an envelope.
 - Auto-detects sender vs. recipient role by comparing `my_public_key` to `envelope.sender_public_key`.
+- Branches on the version byte: v1 decrypts with empty AAD (unchanged); v2 reconstructs the metadata AAD from the received header bytes (`v2_aad`) so a tampered header fails the AEAD tag.
 - Returns `None` for key-publish payloads (`{"type":"key-publish"}`).
 - Parses JSON payloads with `text`, `replyTo.txid`, and `replyTo.preview` fields.
 - Falls back to plain text for non-JSON payloads.
@@ -147,16 +164,16 @@ Decrypts a message from an envelope.
 ### Envelope Functions
 
 #### `is_chat_message(data: &[u8]) -> bool`
-Returns `true` if data has >= 126 bytes and starts with version=0x01, protocolId=0x01.
+Returns `true` if data has >= 126 bytes, protocolId=0x01, and version is either 0x01 or 0x02.
 
 #### `encode_psk_envelope(envelope: &PSKEnvelope) -> Vec<u8>`
-Serializes a PSK envelope to bytes (130-byte header + ciphertext).
+Serializes a PSK envelope to bytes (130-byte header + ciphertext), emitting `envelope.version`.
 
 #### `decode_psk_envelope(data: &[u8]) -> Result<PSKEnvelope>`
-Deserializes bytes into a PSK envelope. Validates version=0x01 and protocolId=0x02.
+Deserializes bytes into a PSK envelope. Accepts version 0x01 or 0x02; validates protocolId=0x02.
 
 #### `is_psk_message(data: &[u8]) -> bool`
-Returns `true` if data has >= 130 bytes and starts with version=0x01, protocolId=0x02.
+Returns `true` if data has >= 130 bytes, protocolId=0x02, and version is either 0x01 or 0x02.
 
 ### PSK Encryption
 
@@ -169,8 +186,18 @@ Encrypts a message with dual-layer ECDH + PSK security.
 5. Encrypts with ChaCha20-Poly1305.
 6. Derives sender key for bidirectional decryption (same hybrid approach).
 
+Emits `version = 0x01` with empty Associated Data on both AEAD operations.
+
+#### `encrypt_psk_message_v2(plaintext: &str, sender_private_key: &StaticSecret, sender_public_key: &PublicKey, recipient_public_key: &PublicKey, initial_psk: &[u8], ratchet_counter: u32) -> Result<PSKEnvelope>`
+Identical to `encrypt_psk_message` except the emitted envelope has `version = 0x02`
+and both AEAD operations bind the 82-byte PSK header metadata prefix as Associated
+Data (`PSKEnvelope::v2_aad`), authenticating version, protocol id, ratchet counter,
+public keys, and nonce. See proposal 0001.
+
 #### `decrypt_psk_message(envelope: &PSKEnvelope, my_private_key: &StaticSecret, my_public_key: &PublicKey, initial_psk: &[u8]) -> Result<String>`
-Decrypts a PSK-encrypted message. Auto-detects sender/recipient role.
+Decrypts a PSK-encrypted message. Auto-detects sender/recipient role. Branches on
+the version byte: v1 uses empty AAD (unchanged); v2 reconstructs the metadata AAD
+from the received header bytes, so a tampered header fails the AEAD tag.
 
 ### PSK Ratchet
 
@@ -226,8 +253,11 @@ Implementations:
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `PROTOCOL_VERSION` | `0x01` | Standard protocol version |
+| `PROTOCOL_VERSION` | `0x01` | Standard protocol version (v1, empty AAD) |
+| `PROTOCOL_VERSION_V2` | `0x02` | Standard/PSK version with AEAD header binding (proposal 0001) |
 | `PROTOCOL_ID` | `0x01` | Standard protocol ID |
+| `STANDARD_V2_AAD_LEN` | `78` | Standard v2 AAD length (header metadata prefix) |
+| `PSK_V2_AAD_LEN` | `82` | PSK v2 AAD length (header metadata prefix) |
 | `HEADER_SIZE` | `126` | Standard envelope header size |
 | `MAX_PAYLOAD_SIZE` | `882` | Max plaintext bytes (standard) |
 | `NONCE_SIZE` | `12` | ChaCha20-Poly1305 nonce |
@@ -236,7 +266,8 @@ Implementations:
 | `ENCRYPTED_SENDER_KEY_SIZE` | `48` | 32-byte key + 16-byte tag |
 | `SIGNATURE_SIZE` | `64` | Ed25519 signature |
 | `MINIMUM_PAYMENT` | `1000` | Min payment in microAlgos |
-| `PSK_VERSION` | `0x01` | PSK protocol version |
+| `PSK_VERSION` | `0x01` | PSK protocol version (v1, empty AAD) |
+| `PSK_VERSION_V2` | `0x02` | PSK version with AEAD header binding (proposal 0001) |
 | `PSK_PROTOCOL_ID` | `0x02` | PSK protocol ID |
 | `PSK_HEADER_SIZE` | `130` | PSK envelope header size |
 | `PSK_MAX_PAYLOAD_SIZE` | `878` | Max plaintext bytes (PSK) |
@@ -255,8 +286,8 @@ Implementations:
 7. `encrypt_message` rejects plaintext > 882 bytes with `MessageTooLarge`.
 8. `encrypt_psk_message` rejects plaintext > 878 bytes with `MessageTooLarge`.
 9. Standard envelopes use protocolId=0x01; PSK envelopes use protocolId=0x02. These are mutually exclusive.
-10. `ChatEnvelope::decode` rejects data < 126 bytes, wrong version, or wrong protocol ID.
-11. `decode_psk_envelope` rejects data < 130 bytes, wrong version, or wrong protocol ID.
+10. `ChatEnvelope::decode` rejects data < 126 bytes, unknown version (not 0x01/0x02), or wrong protocol ID.
+11. `decode_psk_envelope` rejects data < 130 bytes, unknown version (not 0x01/0x02), or wrong protocol ID.
 12. PSK ratchet derivation is deterministic: same (initial_psk, counter) always produces the same derived key.
 13. Different ratchet counters produce different derived keys (with overwhelming probability).
 14. Session boundaries occur at multiples of `PSK_SESSION_SIZE` (100): counter 99 and 100 use different session PSKs.
@@ -270,6 +301,9 @@ Implementations:
 22. `PSKExchangeURI::parse` requires the `algochat-psk://v1?` prefix and both `addr` and `psk` parameters.
 23. PSK exchange URIs use base64url-no-pad encoding for the PSK bytes.
 24. `FileKeyStorage` requires a password; operations fail with `StorageFailed` if no password is set.
+25. A v2 envelope (standard or PSK) whose header bytes are modified in transit fails decryption with `DecryptionError`; a v1 envelope does not bind the header (that is the gap proposal 0001 closes).
+26. A v2 round-trip with an unchanged header decrypts to the original plaintext; `encode`->`decode` remains lossless for v2 (only the version byte differs from v1).
+27. Both AEAD operations of a v2 envelope (message cipher and encrypted_sender_key cipher) authenticate the same header metadata AAD (`v2_aad`). See proposal 0001.
 
 ## Behavioral Examples
 

@@ -124,6 +124,7 @@ impl MessageCache for InMemoryMessageCache {
 /// Entry in the public key cache with expiration.
 struct CacheEntry {
     key: [u8; 32],
+    is_verified: bool,
     expires_at: Instant,
 }
 
@@ -147,13 +148,23 @@ impl PublicKeyCache {
         Self::new(Duration::from_secs(86400))
     }
 
-    /// Store a public key for an address.
+    /// Store a public key for an address, defaulting to unverified.
+    ///
+    /// Prefer [`PublicKeyCache::store_verified`] so the real verification status
+    /// is preserved; this convenience method exists for callers that only have a
+    /// bare key and treat it as trust-on-first-use (unverified).
     pub async fn store(&self, address: &str, key: [u8; 32]) {
+        self.store_verified(address, key, false).await;
+    }
+
+    /// Store a public key together with its real verification status.
+    pub async fn store_verified(&self, address: &str, key: [u8; 32], is_verified: bool) {
         let mut cache = self.cache.write().await;
         cache.insert(
             address.to_string(),
             CacheEntry {
                 key,
+                is_verified,
                 expires_at: Instant::now() + self.ttl,
             },
         );
@@ -161,10 +172,15 @@ impl PublicKeyCache {
 
     /// Retrieve a public key for an address (returns None if expired).
     pub async fn retrieve(&self, address: &str) -> Option<[u8; 32]> {
+        self.retrieve_verified(address).await.map(|(key, _)| key)
+    }
+
+    /// Retrieve a public key and its verification status (None if expired).
+    pub async fn retrieve_verified(&self, address: &str) -> Option<([u8; 32], bool)> {
         let cache = self.cache.read().await;
         cache.get(address).and_then(|entry| {
             if entry.expires_at > Instant::now() {
-                Some(entry.key)
+                Some((entry.key, entry.is_verified))
             } else {
                 None
             }
@@ -554,10 +570,12 @@ impl EncryptionKeyStorage for FileKeyStorage {
         }
 
         // Parse: salt + nonce + ciphertext
-        let salt: [u8; 32] = file_data[..Self::SALT_SIZE].try_into().unwrap();
+        let salt: [u8; 32] = file_data[..Self::SALT_SIZE]
+            .try_into()
+            .map_err(|_| AlgoChatError::StorageFailed("Invalid key data format".to_string()))?;
         let nonce: [u8; 12] = file_data[Self::SALT_SIZE..Self::SALT_SIZE + Self::NONCE_SIZE]
             .try_into()
-            .unwrap();
+            .map_err(|_| AlgoChatError::StorageFailed("Invalid key data format".to_string()))?;
         let ciphertext = &file_data[Self::SALT_SIZE + Self::NONCE_SIZE..];
 
         // Derive decryption key from password
@@ -729,7 +747,10 @@ mod tests {
         let cache = InMemoryMessageCache::new();
         let msg = test_message("tx1", 100);
 
-        cache.store(&[msg.clone()], "alice").await.unwrap();
+        cache
+            .store(std::slice::from_ref(&msg), "alice")
+            .await
+            .unwrap();
         cache.store(&[msg], "alice").await.unwrap();
 
         let retrieved = cache.retrieve("alice", None).await.unwrap();
@@ -978,7 +999,7 @@ mod tests {
 
         // Write truncated data directly to the file
         let file_path = dir.path().join("CORRUPT.key");
-        std::fs::write(&file_path, &[0u8; 10]).unwrap();
+        std::fs::write(&file_path, [0u8; 10]).unwrap();
 
         let result = storage.retrieve("CORRUPT").await;
         assert!(result.is_err());

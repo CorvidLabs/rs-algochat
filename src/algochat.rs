@@ -32,6 +32,13 @@ pub struct AlgoChatConfig {
     pub cache_public_keys: bool,
     /// Whether to cache messages locally.
     pub cache_messages: bool,
+    /// Whether to refuse encrypting to keys that are not cryptographically
+    /// verified (strict identity mode, per proposal 0001).
+    ///
+    /// Defaults to `false` to preserve trust-on-first-use behavior. When `true`,
+    /// [`AlgoChatClient::discover_verified_key`] is the enforced discovery path
+    /// and returns an error for unverified keys.
+    pub require_verified_keys: bool,
 }
 
 impl AlgoChatConfig {
@@ -42,6 +49,7 @@ impl AlgoChatConfig {
             auto_discover_keys: true,
             cache_public_keys: true,
             cache_messages: true,
+            require_verified_keys: false,
         }
     }
 
@@ -202,13 +210,23 @@ where
     }
 
     /// Discovers the encryption public key for an address.
+    ///
+    /// The returned [`DiscoveredKey`] carries its real `is_verified` flag: it is
+    /// `true` only when a signed announcement was verified against the address's
+    /// Ed25519 key, and `false` for keys scraped from a message envelope or an
+    /// unsigned announcement. Cached keys preserve the verification status they
+    /// were discovered with (they are no longer hardcoded as verified).
+    ///
+    /// This is the lenient accessor; it never enforces verification. Use
+    /// [`AlgoChatClient::discover_verified_key`] to refuse unverified keys.
     pub async fn discover_key(&self, address: &str) -> Result<Option<DiscoveredKey>> {
-        // Check cache first
+        // Check cache first, preserving the real verification status.
         if self.config.cache_public_keys {
-            if let Some(key) = self.public_key_cache.retrieve(address).await {
+            if let Some((key, is_verified)) = self.public_key_cache.retrieve_verified(address).await
+            {
                 return Ok(Some(DiscoveredKey {
                     public_key: key,
-                    is_verified: true, // Cached keys are assumed verified
+                    is_verified,
                 }));
             }
         }
@@ -216,16 +234,39 @@ where
         // Search indexer for key announcement
         let key = crate::blockchain::discover_encryption_key(&self.indexer, address).await?;
 
-        // Cache if found
+        // Cache if found, propagating the real verification status.
         if let Some(ref discovered) = key {
             if self.config.cache_public_keys {
                 self.public_key_cache
-                    .store(address, discovered.public_key)
+                    .store_verified(address, discovered.public_key, discovered.is_verified)
                     .await;
             }
         }
 
         Ok(key)
+    }
+
+    /// Discovers a key and enforces that it is cryptographically verified.
+    ///
+    /// Strict identity accessor (proposal 0001): returns the discovered key only
+    /// when its signature was verified against the address-derived Ed25519 key.
+    /// An unverified or missing key yields an error, so callers can refuse to
+    /// encrypt to an unverified identity regardless of the `require_verified_keys`
+    /// default. Use [`AlgoChatClient::discover_key`] for trust-on-first-use.
+    pub async fn discover_verified_key(&self, address: &str) -> Result<DiscoveredKey> {
+        let discovered = self
+            .discover_key(address)
+            .await?
+            .ok_or_else(|| AlgoChatError::PublicKeyNotFound(address.to_string()))?;
+
+        if !discovered.is_verified {
+            return Err(AlgoChatError::InvalidSignature(format!(
+                "Encryption key for {} is not verified (no valid signed announcement)",
+                address
+            )));
+        }
+
+        Ok(discovered)
     }
 
     /// Encrypts a message for a recipient.
@@ -366,11 +407,16 @@ where
             (contact.psk.clone(), counter)
         };
 
-        // Discover recipient key
-        let discovered = self
-            .discover_key(address)
-            .await?
-            .ok_or_else(|| AlgoChatError::PublicKeyNotFound(address.to_string()))?;
+        // Discover recipient key, honoring the identity-verification policy.
+        // With `require_verified_keys`, refuse to encrypt to an unverified
+        // identity by taking the strict discovery path (proposal 0001).
+        let discovered = if self.config.require_verified_keys {
+            self.discover_verified_key(address).await?
+        } else {
+            self.discover_key(address)
+                .await?
+                .ok_or_else(|| AlgoChatError::PublicKeyNotFound(address.to_string()))?
+        };
 
         let encrypted = self.encrypt_psk(message, &discovered.public_key, &psk, counter)?;
         Ok((encrypted, counter))
@@ -645,7 +691,7 @@ mod tests {
                 .iter()
                 .filter(|tx| {
                     (tx.sender == address || tx.receiver == address)
-                        && after_round.map_or(true, |r| tx.confirmed_round > r)
+                        && after_round.is_none_or(|r| tx.confirmed_round > r)
                 })
                 .cloned()
                 .collect())
@@ -664,7 +710,7 @@ mod tests {
                 .filter(|tx| {
                     ((tx.sender == address1 && tx.receiver == address2)
                         || (tx.sender == address2 && tx.receiver == address1))
-                        && after_round.map_or(true, |r| tx.confirmed_round > r)
+                        && after_round.is_none_or(|r| tx.confirmed_round > r)
                 })
                 .cloned()
                 .collect())
@@ -1054,6 +1100,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_discover_verified_key_rejects_unverified() {
+        let bob_key = {
+            let (_, pub_key) = derive_keys_from_seed(&BOB_SEED).unwrap();
+            *pub_key.as_bytes()
+        };
+
+        // Unsigned announcement -> discovered key is unverified.
+        let indexer = MockIndexer::with_transactions(vec![NoteTransaction {
+            txid: "KEY_ANNOUNCE".to_string(),
+            sender: BOB_ADDR.to_string(),
+            receiver: BOB_ADDR.to_string(),
+            note: bob_key.to_vec(),
+            confirmed_round: 50,
+            round_time: 1700000000,
+        }]);
+
+        let client = make_alice_client(indexer).await;
+
+        // Lenient accessor returns the (unverified) key.
+        let lenient = client.discover_key(BOB_ADDR).await.unwrap().unwrap();
+        assert!(!lenient.is_verified);
+
+        // Strict accessor refuses the unverified key.
+        let strict = client.discover_verified_key(BOB_ADDR).await;
+        assert!(matches!(strict, Err(AlgoChatError::InvalidSignature(_))));
+    }
+
+    #[tokio::test]
+    async fn test_discover_verified_key_missing() {
+        let client = make_alice_client(MockIndexer::new()).await;
+        let strict = client.discover_verified_key(BOB_ADDR).await;
+        assert!(matches!(strict, Err(AlgoChatError::PublicKeyNotFound(_))));
+    }
+
+    #[tokio::test]
     async fn test_discover_key_cached() {
         let bob_key = {
             let (_, pub_key) = derive_keys_from_seed(&BOB_SEED).unwrap();
@@ -1075,10 +1156,12 @@ mod tests {
         let result1 = client.discover_key(BOB_ADDR).await.unwrap();
         assert!(result1.is_some());
 
-        // Second call should use cache (and report as verified since cached)
+        // Second call should use cache and preserve the real (unverified) status.
+        // The announcement here is unsigned, so the cached key stays unverified
+        // rather than being hardcoded as verified.
         let result2 = client.discover_key(BOB_ADDR).await.unwrap();
         assert!(result2.is_some());
-        assert!(result2.unwrap().is_verified); // Cached keys assumed verified
+        assert!(!result2.unwrap().is_verified);
     }
 
     #[tokio::test]
@@ -1332,6 +1415,47 @@ mod tests {
         let alice = make_alice_client(MockIndexer::new()).await;
         let result = alice.send_psk(BOB_ADDR, "hello").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_psk_require_verified_rejects_unverified() {
+        let bob_key = {
+            let (_, pub_key) = derive_keys_from_seed(&BOB_SEED).unwrap();
+            *pub_key.as_bytes()
+        };
+
+        // Unsigned announcement -> discovered key is unverified.
+        let indexer = MockIndexer::with_transactions(vec![NoteTransaction {
+            txid: "KEY_ANNOUNCE".to_string(),
+            sender: BOB_ADDR.to_string(),
+            receiver: BOB_ADDR.to_string(),
+            note: bob_key.to_vec(),
+            confirmed_round: 50,
+            round_time: 1700000000,
+        }]);
+
+        let mut config = AlgoChatConfig::testnet();
+        config.require_verified_keys = true;
+
+        let alice = AlgoChat::from_seed(
+            &ALICE_SEED,
+            ALICE_ADDR,
+            config,
+            MockAlgod::new(),
+            indexer,
+            InMemoryKeyStorage::new(),
+            InMemoryMessageCache::new(),
+        )
+        .await
+        .unwrap();
+        alice
+            .add_psk_contact(BOB_ADDR, &TEST_PSK, None)
+            .await
+            .unwrap();
+
+        // With verification required, sending to an unverified identity is refused.
+        let result = alice.send_psk(BOB_ADDR, "hello").await;
+        assert!(matches!(result, Err(AlgoChatError::InvalidSignature(_))));
     }
 
     #[tokio::test]

@@ -459,6 +459,46 @@ mod tests {
         assert!(!key.is_verified);
     }
 
+    /// Proposal 0001 identity vector: an announcement signed by account A
+    /// verifies against A's address-derived Ed25519 key (is_verified=true) and
+    /// fails against any other account B (is_verified=false).
+    #[test]
+    fn test_parse_key_announcement_address_derived_verify() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use sha2::Digest;
+
+        // Build an Algorand address from an Ed25519 verifying key.
+        fn address_for(ed_pub: &[u8; 32]) -> String {
+            let hash = sha2::Sha512_256::digest(ed_pub);
+            let checksum = &hash[hash.len() - 4..];
+            let mut full = Vec::with_capacity(36);
+            full.extend_from_slice(ed_pub);
+            full.extend_from_slice(checksum);
+            data_encoding::BASE32_NOPAD.encode(&full)
+        }
+
+        let signing_a = SigningKey::from_bytes(&[0x11u8; 32]);
+        let addr_a = address_for(signing_a.verifying_key().as_bytes());
+        let signing_b = SigningKey::from_bytes(&[0x22u8; 32]);
+        let addr_b = address_for(signing_b.verifying_key().as_bytes());
+
+        // Announce an X25519 key signed by A: note = x25519(32) || sig(64).
+        let x25519_key = [0x55u8; 32];
+        let sig = signing_a.sign(&x25519_key).to_bytes();
+        let mut note = Vec::with_capacity(96);
+        note.extend_from_slice(&x25519_key);
+        note.extend_from_slice(&sig);
+
+        // Passes for A.
+        let key_a = parse_key_announcement(&note, &addr_a).unwrap();
+        assert_eq!(key_a.public_key, x25519_key);
+        assert!(key_a.is_verified, "announcement must verify for signer A");
+
+        // Fails for B (wrong identity).
+        let key_b = parse_key_announcement(&note, &addr_b).unwrap();
+        assert!(!key_b.is_verified, "announcement must not verify for B");
+    }
+
     #[test]
     fn test_transaction_info_debug() {
         let info = TransactionInfo {

@@ -2,7 +2,7 @@
 
 use crate::types::{
     AlgoChatError, Result, ENCRYPTED_SENDER_KEY_SIZE, HEADER_SIZE, NONCE_SIZE, PROTOCOL_ID,
-    PROTOCOL_VERSION, PUBLIC_KEY_SIZE,
+    PROTOCOL_VERSION, PROTOCOL_VERSION_V2, PUBLIC_KEY_SIZE, STANDARD_V2_AAD_LEN,
 };
 
 /// AlgoChat message envelope.
@@ -47,6 +47,21 @@ impl ChatEnvelope {
         data
     }
 
+    /// Build the v2 AEAD Associated Data (the header metadata prefix).
+    ///
+    /// This is `bytes[0..78)` of the encoded header:
+    /// `version ‖ protocol_id ‖ sender_public_key ‖ ephemeral_public_key ‖ nonce`.
+    /// Both AEAD operations of a v2 envelope authenticate this same AAD.
+    pub fn v2_aad(&self) -> Vec<u8> {
+        let mut aad = Vec::with_capacity(STANDARD_V2_AAD_LEN);
+        aad.push(self.version);
+        aad.push(self.protocol_id);
+        aad.extend_from_slice(&self.sender_public_key);
+        aad.extend_from_slice(&self.ephemeral_public_key);
+        aad.extend_from_slice(&self.nonce);
+        aad
+    }
+
     /// Decode bytes into an envelope.
     pub fn decode(data: &[u8]) -> Result<Self> {
         if data.len() < HEADER_SIZE {
@@ -60,7 +75,7 @@ impl ChatEnvelope {
         let version = data[0];
         let protocol_id = data[1];
 
-        if version != PROTOCOL_VERSION {
+        if version != PROTOCOL_VERSION && version != PROTOCOL_VERSION_V2 {
             return Err(AlgoChatError::UnknownVersion(version));
         }
 
@@ -100,11 +115,13 @@ impl ChatEnvelope {
 }
 
 /// Check if data looks like a valid AlgoChat envelope.
+///
+/// Accepts both protocol version `0x01` (v1, no AAD) and `0x02` (v2, header AAD).
 pub fn is_chat_message(data: &[u8]) -> bool {
     if data.len() < HEADER_SIZE {
         return false;
     }
-    data[0] == PROTOCOL_VERSION && data[1] == PROTOCOL_ID
+    (data[0] == PROTOCOL_VERSION || data[0] == PROTOCOL_VERSION_V2) && data[1] == PROTOCOL_ID
 }
 
 #[cfg(test)]
@@ -151,9 +168,42 @@ mod tests {
     #[test]
     fn test_decode_wrong_version() {
         let mut data = vec![0u8; HEADER_SIZE];
-        data[0] = 0x02;
+        data[0] = 0x03;
         data[1] = PROTOCOL_ID;
         let result = ChatEnvelope::decode(&data);
-        assert!(matches!(result, Err(AlgoChatError::UnknownVersion(0x02))));
+        assert!(matches!(result, Err(AlgoChatError::UnknownVersion(0x03))));
+    }
+
+    #[test]
+    fn test_decode_v2_version_accepted() {
+        let mut data = vec![0u8; HEADER_SIZE];
+        data[0] = PROTOCOL_VERSION_V2;
+        data[1] = PROTOCOL_ID;
+        let decoded = ChatEnvelope::decode(&data).unwrap();
+        assert_eq!(decoded.version, PROTOCOL_VERSION_V2);
+    }
+
+    #[test]
+    fn test_is_chat_message_accepts_v2() {
+        let mut data = vec![PROTOCOL_VERSION_V2, PROTOCOL_ID];
+        data.extend(vec![0u8; HEADER_SIZE - 2]);
+        assert!(is_chat_message(&data));
+    }
+
+    #[test]
+    fn test_v2_aad_layout() {
+        let envelope = ChatEnvelope {
+            version: PROTOCOL_VERSION_V2,
+            protocol_id: PROTOCOL_ID,
+            sender_public_key: [1u8; 32],
+            ephemeral_public_key: [2u8; 32],
+            nonce: [3u8; 12],
+            encrypted_sender_key: vec![4u8; 48],
+            ciphertext: vec![5u8; 32],
+        };
+        let aad = envelope.v2_aad();
+        assert_eq!(aad.len(), 78);
+        // The AAD must equal the first 78 bytes of the encoded envelope.
+        assert_eq!(&aad[..], &envelope.encode()[..78]);
     }
 }
