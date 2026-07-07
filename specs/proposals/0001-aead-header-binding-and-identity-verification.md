@@ -92,7 +92,11 @@ AAD option in `@noble/ciphers`).
 - **Downgrade defense:** when a peer is known to support `v2` (advertised in
   their signed key announcement, Part 2), a receiver MUST reject inbound `v1`
   from that peer (treat as a downgrade attempt), and MUST reject a standard
-  `0x01` message from a peer with an established PSK (`0x02`) channel.
+  (non-PSK) message from a peer with an established PSK channel. Here the `0x01`
+  and `0x02` distinction is the **`protocol_id`** (standard vs. PSK channel), not
+  the version byte: a peer with an established PSK (`protocol_id == 0x02`) channel
+  MUST reject an inbound standard-protocol (`protocol_id == 0x01`) message, so an
+  attacker cannot bypass the PSK channel by falling back to the standard protocol.
 
 ### Negotiation / rollout (no break)
 
@@ -125,15 +129,21 @@ note = x25519_public_key(32) ‖ ed25519_signature(64)   // 96 bytes
 
 - `ed25519_signature = Ed25519-Sign(account_signing_key, x25519_public_key)`.
 - Optional trailing `capabilities` byte: bit 0 = "supports v2 (header AAD)".
+  Bits 1–7 are **reserved**: senders MUST set them to `0`, and receivers MUST
+  ignore them (a receiver MUST NOT reject an announcement solely because a
+  reserved bit is set), so the bits remain available for future extensions.
   Notes shorter than 97 bytes are treated as `capabilities = 0` (v1-only),
-  preserving compatibility with existing announcements.
+  preserving compatibility with existing announcements. Any bytes beyond the
+  first 97 MUST be ignored by receivers (reserved for future extensions).
 
 ### Address → Ed25519 verifying key (normative)
 
 Discovery MUST derive the verifying key from the **Algorand address**, not from
 the encryption key:
 
-1. base32-decode the 58-char address to 36 bytes.
+1. base32-decode the 58-char address to 36 bytes. The address is **unpadded**
+   base32 (RFC 4648, no trailing `=`); decoders that require padding MUST pad the
+   input to a multiple of 8 characters (append `======`) before decoding.
 2. `ed25519_public_key = bytes[0..32]`; `checksum = bytes[32..36]`.
 3. Verify `checksum == SHA512/256(ed25519_public_key)[28..32]`; reject otherwise
    (`InvalidPublicKey`).
@@ -142,8 +152,15 @@ the encryption key:
 
 - On discovery, verify with
   `verify_encryption_key_bytes(x25519_key, ed25519_from_address, signature)` and
-  set `is_verified = true` **only** on success. An announcement with no signature
-  (legacy / scraped-from-message) is `is_verified = false`.
+  set `is_verified = true` **only** on success. Distinguish a missing signature
+  from an invalid one:
+  - An announcement with **no signature** (legacy / scraped-from-message) is
+    accepted with `is_verified = false` (eligible for TOFU).
+  - An announcement whose signature is **present but fails to verify** MUST be
+    rejected outright — discovery MUST NOT fall back to `is_verified = false`. An
+    invalid signature indicates tampering or a key-substitution attack, not a
+    legacy sender; discovery skips such an announcement (and MAY surface
+    `InvalidSignature`) rather than treating the key as unverified-but-usable.
 - **Cached keys MUST carry their real `is_verified` value** — implementations
   MUST NOT hardcode cached keys as verified.
 - Implementations MUST NOT silently encrypt to an `is_verified = false` key. One
@@ -153,7 +170,20 @@ the encryption key:
   - **TOFU+confirm**: allow first use but mark the conversation unverified and
     require an out-of-band safety-number confirmation before treating it as
     trusted. The full-digest safety number (not the 8-byte `fingerprint`) is the
-    confirmation primitive.
+    confirmation primitive, defined normatively as:
+
+    ```
+    safety_number = SHA-256( min(id_A, id_B) ‖ max(id_A, id_B) )
+    ```
+
+    where `id_A` and `id_B` are the two parties' 32-byte Ed25519 identity public
+    keys (each derived from that party's Algorand address, per the section
+    above), ordered by ascending lexicographic byte comparison so both peers
+    compute the identical digest regardless of who initiates. The 32-byte digest
+    is rendered for display as its 64 lowercase hex characters, grouped into
+    eight space-separated blocks of eight characters
+    (e.g. `1a2b3c4d 5e6f7081 …`). Two peers whose displayed strings match have
+    confirmed the identity binding.
 
 ### Invariants (additions)
 
