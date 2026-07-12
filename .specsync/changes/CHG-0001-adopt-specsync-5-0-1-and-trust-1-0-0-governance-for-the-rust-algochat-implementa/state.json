@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "id": "CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa",
+  "slug": "adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa",
+  "title": "Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation",
+  "description": "Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation",
+  "kind": "migration",
+  "state": "draft",
+  "base_commit": "c4256e86362a92f8eacb01b3740fb1ff8b397326",
+  "created_at": 1783884699,
+  "updated_at": 1783884710,
+  "affected_specs": [
+    "algochat",
+    "crypto"
+  ],
+  "affected_paths": [
+    "src/",
+    "tests/",
+    "examples/",
+    "Cargo.toml",
+    "fledge.toml",
+    ".github/",
+    ".specsync/",
+    "specs/",
+    ".trust.toml",
+    ".augur.toml",
+    ".attest.json",
+    "AGENTS.md",
+    "specsync.json",
+    "specsync-registry.toml",
+    "scripts/"
+  ],
+  "no_spec_change": false,
+  "no_spec_change_rationale": null,
+  "acceptance_criteria": [
+    "SpecSync strict validation passes at advisory threshold 0; both active specs preserve their status and semantics; all four agent integrations report installed; Trust doctor and native verification pass; formatting clippy build all 225 unit tests and 14 cross-implementation tests pass; release and standalone Atlas workflows remain intact."
+  ],
+  "selected_artifacts": [
+    "context",
+    "research",
+    "design",
+    "plan",
+    "tasks",
+    "testing",
+    "docs"
+  ],
+  "dependencies": [],
+  "answers": {
+    "architecture_risk": "yes",
+    "public_contract": "no"
+  }
+}

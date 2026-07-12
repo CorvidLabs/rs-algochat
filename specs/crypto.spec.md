@@ -21,6 +21,18 @@ files:
 
 End-to-end encryption for the AlgoChat protocol. Covers X25519 key derivation, ChaCha20-Poly1305 message encryption/decryption, PSK (pre-shared key) ratchet encryption, envelope wire formats, Ed25519 signature verification, and encryption key storage.
 
+## Public API
+
+| Type | Existing contract section |
+|------|---------------------------|
+| `ChatEnvelope` | Public Types |
+| `PSKExchangeURI` | Public Types |
+| `PSKState` | Public Types |
+| `PSKEnvelope` | Public Types |
+| `DecryptedContent` | Public Types |
+| `AlgoChatError` | Public Types and Error Cases |
+| `Result` | Public result alias |
+
 ## Public Types
 
 ### `DecryptedContent`

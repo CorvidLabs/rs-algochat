@@ -9,7 +9,6 @@ on:
       - "examples/**"
       - "Cargo.toml"
       - "specs/**"
-      - "specsync.json"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
@@ -19,7 +18,6 @@ on:
       - "examples/**"
       - "Cargo.toml"
       - "specs/**"
-      - "specsync.json"
       - ".github/workflows/ci.yml"
 
 permissions:
@@ -70,12 +68,3 @@ jobs:
 
       - name: Clippy
         run: cargo clippy -- -D warnings
-
-  specs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Spec validation
-        uses: CorvidLabs/spec-sync@v2.1.0
