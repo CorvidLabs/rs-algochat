@@ -1,6 +1,6 @@
 ---
 id: CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa
-state: draft
+state: implementing
 type: migration
 base_commit: c4256e86362a92f8eacb01b3740fb1ff8b397326
 ---

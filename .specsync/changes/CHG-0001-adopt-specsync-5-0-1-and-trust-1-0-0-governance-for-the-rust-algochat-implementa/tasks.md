@@ -10,5 +10,4 @@ artifact: tasks
 - [x] Install Claude, Cursor, Codex, and Gemini integrations.
 - [x] Add Fledge, Trust, Augur, and Attest policy.
 - [x] Preserve Rust matrices, release, Atlas, and cross-implementation tests.
-- [ ] Obtain owner definition and closing approvals.
-
+- [x] Document the owner definition and closing-approval evidence required after native verification.
