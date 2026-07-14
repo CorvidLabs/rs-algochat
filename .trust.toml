@@ -6,8 +6,8 @@ command = ["fledge", "lanes", "run", "verify"]
 
 [contract]
 enabled = true
-require_coverage = 0
-skip_reason = "No committed SpecSync coverage threshold exists; existing active specifications remain strictly validated"
+require_coverage = 100
+skip_reason = ""
 
 [risk]
 threshold = "block"

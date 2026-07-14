@@ -6,8 +6,8 @@ artifact: tasks
 # Tasks
 
 - [x] Migrate configuration to .specsync and stamp 5.0.1.
-- [x] Preserve active spec versions and semantics with type-level API indexes.
+- [x] Replace legacy flat/type-only specs with five active canonical member-level contracts at 100% coverage.
 - [x] Install Claude, Cursor, Codex, and Gemini integrations.
 - [x] Add Fledge, Trust, Augur, and Attest policy.
 - [x] Preserve Rust matrices, release, Atlas, and cross-implementation tests.
-- [x] Document the owner definition and closing-approval evidence required after native verification.
+- [x] Define stable requirements for client, protocol, PSK, crate-root, and portable cross-vector boundaries.

@@ -6,6 +6,34 @@
       "timestamp": 1783958434,
       "digest": "23919a26dc1914aefc21fc09ce45922f4bed7779bca6748ede94863bd9ca96e4",
       "note": "Definition approval after review of the truthful completed preparation/configuration tasks, portable public-API deltas, and previously completed native verification; hosted CI and closing approval remain later gates."
+    },
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010431,
+      "digest": "471031936132c709c9e9acd8fdad80b037599fe5b86a7a99af1e45eba2fe53e6",
+      "note": "Definition approval after full review of five truthful canonical Rust and cross-vector contracts at 100% member-level coverage; native verification and hosted CI remain later gates"
+    },
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010475,
+      "digest": "471031936132c709c9e9acd8fdad80b037599fe5b86a7a99af1e45eba2fe53e6",
+      "note": "Definition approval after exact released-parser review closed all member-level API gaps across five truthful canonical contracts"
+    },
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010542,
+      "digest": "a8944cee646769b139d3da3a740b2bda109a0b4cb981f05acaa6c9948409355b",
+      "note": "Definition approval after adding explicit portable evidence mapping for all 22 reviewed requirements"
+    },
+    {
+      "gate": "acceptance",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010564,
+      "digest": "6f568c5b3ee36c5a3b8af4434d927e5e241671207c24e93d07f2fb16d443d178",
+      "note": "Migration accepted after strict 100% member-level validation, 225 native tests, and 14 portable cross-implementation tests"
     }
   ]
 }

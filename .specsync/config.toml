@@ -6,7 +6,7 @@ source_dirs = ["src"]
 exclude_dirs = ["tests", "examples", "benches"]
 exclude_patterns = ["**/tests/**", "**/examples/**", "**/benches/**"]
 required_sections = ["Invariants", "Behavioral Examples", "Error Cases", "Change Log"]
-export_level = "type"
+export_level = "member"
 parse_mode = "ast"
 enforcement = "strict"
 
