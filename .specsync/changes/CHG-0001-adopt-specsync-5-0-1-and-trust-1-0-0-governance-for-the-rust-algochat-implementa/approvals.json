@@ -1,0 +1,120 @@
+{
+  "approvals": [
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1783958434,
+      "digest": "23919a26dc1914aefc21fc09ce45922f4bed7779bca6748ede94863bd9ca96e4",
+      "note": "Definition approval after review of the truthful completed preparation/configuration tasks, portable public-API deltas, and previously completed native verification; hosted CI and closing approval remain later gates."
+    },
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010431,
+      "digest": "471031936132c709c9e9acd8fdad80b037599fe5b86a7a99af1e45eba2fe53e6",
+      "note": "Definition approval after full review of five truthful canonical Rust and cross-vector contracts at 100% member-level coverage; native verification and hosted CI remain later gates"
+    },
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010475,
+      "digest": "471031936132c709c9e9acd8fdad80b037599fe5b86a7a99af1e45eba2fe53e6",
+      "note": "Definition approval after exact released-parser review closed all member-level API gaps across five truthful canonical contracts"
+    },
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010542,
+      "digest": "a8944cee646769b139d3da3a740b2bda109a0b4cb981f05acaa6c9948409355b",
+      "note": "Definition approval after adding explicit portable evidence mapping for all 22 reviewed requirements"
+    },
+    {
+      "gate": "acceptance",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010564,
+      "digest": "6f568c5b3ee36c5a3b8af4434d927e5e241671207c24e93d07f2fb16d443d178",
+      "note": "Migration accepted after strict 100% member-level validation, 225 native tests, and 14 portable cross-implementation tests"
+    },
+    {
+      "gate": "acceptance",
+      "actor": "user:0xLeif",
+      "timestamp": 1784010934,
+      "digest": "d8fa617da491fe8549348f9357078758ed648df96dd16f37d1f432b385a76937",
+      "note": "Fresh closing approval after final committed delivery input passed released SpecSync 5.0.1 verification with 22 requirements, 225 unit tests, and 14 cross-implementation tests"
+    }
+  ],
+  "reopenings": [
+    {
+      "schema_version": 1,
+      "change_id": "CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa",
+      "actor": "user:0xLeif",
+      "reason": "Final commit integrated the already-verified additions and deletions into the git index, changing only the portable delivery-input identity; canonical contracts and product behavior are unchanged",
+      "timestamp": 1784010862,
+      "from_state": "accepted",
+      "to_state": "verifying",
+      "superseded_approval": {
+        "gate": "acceptance",
+        "actor": "user:0xLeif",
+        "timestamp": 1784010564,
+        "digest": "6f568c5b3ee36c5a3b8af4434d927e5e241671207c24e93d07f2fb16d443d178",
+        "note": "Migration accepted after strict 100% member-level validation, 225 native tests, and 14 portable cross-implementation tests"
+      },
+      "prior_verification": {
+        "timestamp": 1784010555,
+        "commit": "3938f7f79b20eca71daa8045391990614d3c7487",
+        "contract_digest": "a8944cee646769b139d3da3a740b2bda109a0b4cb981f05acaa6c9948409355b",
+        "workspace_digest": "700b616c60b45bef7d10c27f3d80d887449080d0f410d4ae4967bb7448644e2d",
+        "acceptance_input_digest": "4b93dcad64c3b286fb401c37b7836a7940c4c310f830c4a632cceeb790dc0e11",
+        "passed": true,
+        "commands": [
+          {
+            "command": "cargo fmt --all -- --check",
+            "success": true,
+            "exit_code": 0
+          },
+          {
+            "command": "cargo clippy -- -D warnings",
+            "success": true,
+            "exit_code": 0
+          },
+          {
+            "command": "cargo test --verbose",
+            "success": true,
+            "exit_code": 0
+          },
+          {
+            "command": "cargo test --test cross_impl --verbose",
+            "success": true,
+            "exit_code": 0
+          }
+        ],
+        "requirement_ids": [
+          "REQ-client-001",
+          "REQ-client-002",
+          "REQ-client-003",
+          "REQ-client-004",
+          "REQ-client-005",
+          "REQ-crate-001",
+          "REQ-crate-002",
+          "REQ-cross-vectors-001",
+          "REQ-cross-vectors-002",
+          "REQ-cross-vectors-003",
+          "REQ-cross-vectors-004",
+          "REQ-cross-vectors-005",
+          "REQ-protocol-001",
+          "REQ-protocol-002",
+          "REQ-protocol-003",
+          "REQ-protocol-004",
+          "REQ-protocol-005",
+          "REQ-psk-001",
+          "REQ-psk-002",
+          "REQ-psk-003",
+          "REQ-psk-004",
+          "REQ-psk-005"
+        ]
+      },
+      "stale_acceptance_input_digest": "4b93dcad64c3b286fb401c37b7836a7940c4c310f830c4a632cceeb790dc0e11",
+      "current_acceptance_input_digest": "b7ab58bc6361bcfe063206d2cce1188f4507d9d815e78b447af36e7fb1853b40"
+    }
+  ]
+}

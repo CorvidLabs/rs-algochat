@@ -1,0 +1,54 @@
+{
+  "timestamp": 1784010881,
+  "commit": "023d3e9709837c4bf4133dc25a00b5b58fabb7b2",
+  "contract_digest": "a8944cee646769b139d3da3a740b2bda109a0b4cb981f05acaa6c9948409355b",
+  "workspace_digest": "b1a68ba8910cc206ec3206dd7258938b74c56e25ed3d0a5d3824244a2fe86609",
+  "acceptance_input_digest": "b7ab58bc6361bcfe063206d2cce1188f4507d9d815e78b447af36e7fb1853b40",
+  "passed": true,
+  "commands": [
+    {
+      "command": "cargo fmt --all -- --check",
+      "success": true,
+      "exit_code": 0
+    },
+    {
+      "command": "cargo clippy -- -D warnings",
+      "success": true,
+      "exit_code": 0
+    },
+    {
+      "command": "cargo test --verbose",
+      "success": true,
+      "exit_code": 0
+    },
+    {
+      "command": "cargo test --test cross_impl --verbose",
+      "success": true,
+      "exit_code": 0
+    }
+  ],
+  "requirement_ids": [
+    "REQ-client-001",
+    "REQ-client-002",
+    "REQ-client-003",
+    "REQ-client-004",
+    "REQ-client-005",
+    "REQ-crate-001",
+    "REQ-crate-002",
+    "REQ-cross-vectors-001",
+    "REQ-cross-vectors-002",
+    "REQ-cross-vectors-003",
+    "REQ-cross-vectors-004",
+    "REQ-cross-vectors-005",
+    "REQ-protocol-001",
+    "REQ-protocol-002",
+    "REQ-protocol-003",
+    "REQ-protocol-004",
+    "REQ-protocol-005",
+    "REQ-psk-001",
+    "REQ-psk-002",
+    "REQ-psk-003",
+    "REQ-psk-004",
+    "REQ-psk-005"
+  ]
+}

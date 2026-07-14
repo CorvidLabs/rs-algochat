@@ -1,0 +1,10 @@
+[tasks]
+build = "cargo build --verbose"
+test = "cargo test --verbose"
+cross-impl = "cargo test --test cross_impl --verbose"
+lint = "cargo clippy -- -D warnings"
+fmt = "cargo fmt --all -- --check"
+
+[lanes.verify]
+description = "Format, lint, build, and run all Rust AlgoChat protocol and cross-implementation tests"
+steps = ["fmt", "lint", "build", "test", "cross-impl"]

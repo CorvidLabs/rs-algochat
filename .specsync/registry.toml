@@ -1,0 +1,9 @@
+[registry]
+name = "rs-algochat"
+
+[specs]
+client = "specs/client/client.spec.md"
+crate = "specs/crate/crate.spec.md"
+cross-vectors = "specs/cross-vectors/cross-vectors.spec.md"
+protocol = "specs/protocol/protocol.spec.md"
+psk = "specs/psk/psk.spec.md"

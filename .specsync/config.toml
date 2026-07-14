@@ -1,0 +1,14 @@
+# SpecSync 5 configuration
+# Docs: https://github.com/CorvidLabs/spec-sync
+
+specs_dir = "specs"
+source_dirs = ["src"]
+exclude_dirs = ["tests", "examples", "benches"]
+exclude_patterns = ["**/tests/**", "**/examples/**", "**/benches/**"]
+required_sections = ["Invariants", "Behavioral Examples", "Error Cases", "Change Log"]
+export_level = "member"
+parse_mode = "ast"
+enforcement = "strict"
+
+[lifecycle]
+track_history = false

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "id": "CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa",
+  "slug": "adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa",
+  "title": "Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation",
+  "description": "Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation",
+  "kind": "migration",
+  "state": "accepted",
+  "canonical_applied": true,
+  "base_commit": "c4256e86362a92f8eacb01b3740fb1ff8b397326",
+  "created_at": 1783884699,
+  "updated_at": 1784010934,
+  "affected_specs": [
+    "client",
+    "protocol",
+    "psk",
+    "crate",
+    "cross-vectors"
+  ],
+  "affected_paths": [
+    "src/",
+    "tests/",
+    "examples/",
+    "Cargo.toml",
+    "fledge.toml",
+    ".github/",
+    ".specsync/",
+    "specs/",
+    ".trust.toml",
+    ".augur.toml",
+    ".attest.json",
+    "AGENTS.md",
+    "specsync.json",
+    "specsync-registry.toml",
+    "scripts/"
+  ],
+  "no_spec_change": false,
+  "no_spec_change_rationale": null,
+  "acceptance_criteria": [
+    "SpecSync strict validation passes at 100% file and LOC coverage with member-level API coverage; five active canonical contracts truthfully describe client, standard protocol, PSK, crate-root, and cross-vector behavior; all four agent integrations report installed; Trust doctor and native verification pass; formatting, clippy, build, all 225 unit tests, and 14 cross-implementation tests pass; release and standalone Atlas workflows remain intact."
+  ],
+  "selected_artifacts": [
+    "context",
+    "research",
+    "design",
+    "plan",
+    "tasks",
+    "testing",
+    "docs"
+  ],
+  "dependencies": [],
+  "answers": {
+    "architecture_risk": "yes",
+    "public_contract": "no"
+  }
+}
