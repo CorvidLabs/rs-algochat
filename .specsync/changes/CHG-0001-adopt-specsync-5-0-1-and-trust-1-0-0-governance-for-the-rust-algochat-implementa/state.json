@@ -6,9 +6,10 @@
   "description": "Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation",
   "kind": "migration",
   "state": "accepted",
+  "canonical_applied": true,
   "base_commit": "c4256e86362a92f8eacb01b3740fb1ff8b397326",
   "created_at": 1783884699,
-  "updated_at": 1784010564,
+  "updated_at": 1784010934,
   "affected_specs": [
     "client",
     "protocol",
