@@ -14,7 +14,7 @@ Version 2 SHALL authenticate the exact 78-byte metadata prefix so version, proto
 
 ### REQ-protocol-003 — Payload and key bounds
 
-The implementation SHALL enforce the 882-byte payload maximum and exact seed, key, nonce, signature, and fixed-field lengths.
+The implementation SHALL enforce the 3954-byte payload maximum and exact seed, key, nonce, signature, and fixed-field lengths. A plaintext of 882 bytes SHALL still encrypt. One byte past 3954 SHALL fail before a transaction is built. A note payment fee at a minimum fee of 1000 microAlgos SHALL be 1000, 1098, and 1308 for notes of 1024, 2000, and 4096 bytes.
 
 ### REQ-protocol-004 — Bidirectional decryption
 
@@ -31,7 +31,7 @@ Published encryption-key signatures SHALL verify only for the signing identity, 
 
 ## Constraints
 
-- Version 1 compatibility and the Algorand note ceiling are preserved.
+- Version 1 compatibility is preserved. The Algorand note ceiling is 4096 bytes, protocol revision 1.2.1, not 1.3.
 - Random values use the system CSPRNG; fixed material exists only in deterministic tests.
 
 ## Out of Scope

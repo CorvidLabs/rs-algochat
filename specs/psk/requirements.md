@@ -31,7 +31,7 @@ Exchange URIs SHALL require the algochat-psk://v1 form, peer address, and exact 
 
 ## Constraints
 
-- The 878-byte maximum preserves the Algorand note ceiling.
+- The 3950-byte maximum preserves the 4096-byte Algorand note ceiling. An 878-byte plaintext still encrypts.
 - Version 1 remains decodable and counter state remains serializable.
 
 ## Out of Scope

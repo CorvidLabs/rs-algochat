@@ -17,7 +17,7 @@ spec: psk.spec.md
 
 ## Current Status
 
-- PSK versions 1 and 2 are active and covered by unit and known-answer vectors.
+- PSK versions 1 and 2 are active. The plaintext maximum is 3950 bytes under the 4096-byte note ceiling (protocol revision 1.2.1, not 1.3).
 
 ## Notes
 

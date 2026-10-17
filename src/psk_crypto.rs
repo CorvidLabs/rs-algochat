@@ -439,6 +439,70 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_878_byte_plaintext_succeeds() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+        let psk = test_psk();
+        let message = "A".repeat(878);
+
+        let envelope = encrypt_psk_message(
+            &message,
+            &alice_private,
+            &alice_public,
+            &bob_public,
+            &psk,
+            0,
+        )
+        .unwrap();
+        let encoded = crate::psk_envelope::encode_psk_envelope(&envelope);
+
+        assert_eq!(
+            encoded.len(),
+            crate::psk_types::PSK_HEADER_SIZE + 878 + crate::psk_types::PSK_TAG_SIZE
+        );
+        assert!(encoded.len() <= 1024);
+
+        let decoded = crate::psk_envelope::decode_psk_envelope(&encoded).unwrap();
+        let decrypted = decrypt_psk_message(&decoded, &bob_private, &bob_public, &psk).unwrap();
+        assert_eq!(decrypted, message);
+    }
+
+    #[test]
+    fn test_max_plaintext_encodes_to_4096() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+        let psk = test_psk();
+        let message = "A".repeat(PSK_MAX_PAYLOAD_SIZE);
+
+        let envelope = encrypt_psk_message(
+            &message,
+            &alice_private,
+            &alice_public,
+            &bob_public,
+            &psk,
+            0,
+        )
+        .unwrap();
+        let encoded = crate::psk_envelope::encode_psk_envelope(&envelope);
+
+        assert_eq!(crate::psk_types::PSK_HEADER_SIZE, 130);
+        assert_eq!(crate::psk_types::PSK_TAG_SIZE, 16);
+        assert_eq!(PSK_MAX_PAYLOAD_SIZE, 3950);
+        assert_eq!(
+            PSK_MAX_PAYLOAD_SIZE,
+            crate::types::MAX_NOTE_SIZE
+                - crate::psk_types::PSK_HEADER_SIZE
+                - crate::psk_types::PSK_TAG_SIZE
+        );
+        assert_eq!(encoded.len(), 4096);
+        assert_eq!(encoded.len(), crate::types::MAX_NOTE_SIZE);
+
+        let decoded = crate::psk_envelope::decode_psk_envelope(&encoded).unwrap();
+        let decrypted = decrypt_psk_message(&decoded, &bob_private, &bob_public, &psk).unwrap();
+        assert_eq!(decrypted, message);
+    }
+
+    #[test]
     fn test_empty_message() {
         let (alice_private, alice_public) = alice_keys();
         let (bob_private, bob_public) = bob_keys();

@@ -17,7 +17,7 @@ spec: protocol.spec.md
 
 ## Current Status
 
-- Versions 1 and 2 are active and tested; adoption changes governance only.
+- Versions 1 and 2 are active. Protocol revision 1.2.1 raises the note ceiling to 4096 bytes. This is not protocol 1.3 and adds no new version byte.
 
 ## Notes
 

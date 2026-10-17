@@ -52,7 +52,9 @@ remaining able to decode version 1 messages.
 | `HEADER_SIZE` | Standard envelope fixed header length, 126 bytes. |
 | `TAG_SIZE` | ChaCha20-Poly1305 authentication tag length, 16 bytes. |
 | `ENCRYPTED_SENDER_KEY_SIZE` | Wrapped sender-key field length, 48 bytes. |
-| `MAX_PAYLOAD_SIZE` | Largest standard plaintext compatible with an Algorand note, 882 bytes. |
+| `MAX_NOTE_SIZE` | Algorand note ceiling, 4096 bytes. A 4097-byte note is rejected. |
+| `payment_fee` | MicroAlgo fee for a note-carrying payment. The first 1024 bytes cost one minimum fee. Each byte past 1024 adds one ten-thousandth of the minimum fee, rounded up once. This crate has no Falcon signer, so the scheme component is one minimum fee. |
+| `MAX_PAYLOAD_SIZE` | Largest standard plaintext compatible with a 4096-byte Algorand note, 3954 bytes. |
 | `NONCE_SIZE` | ChaCha20-Poly1305 nonce length, 12 bytes. |
 | `PUBLIC_KEY_SIZE` | X25519 and Ed25519 public-key length, 32 bytes. |
 | `KEY_DERIVATION_SALT` | Stable HKDF salt for account-seed X25519 derivation. |
@@ -75,9 +77,10 @@ remaining able to decode version 1 messages.
 
 1. Standard envelopes use protocol ID `0x01`; only versions `0x01` and `0x02` are accepted.
 2. V2 encryption authenticates exactly the version, protocol ID, sender key, ephemeral key, and nonce prefix.
-3. Plaintext may not exceed 882 bytes, preserving the 1,024-byte Algorand note limit.
-4. Seed, public-key, nonce, signature, and fixed header fields are rejected at incorrect lengths.
-5. Sender and recipient can decrypt the same envelope through their corresponding ECDH path.
+3. Standard plaintext may not exceed 3954 bytes, so the encoded note is at most 4096 bytes. The header stays 126 bytes and the tag stays 16 bytes. An 882-byte plaintext still encrypts, and that note is at most 1024 bytes.
+4. A note payment fee is one minimum fee plus the consensus surcharge for bytes past 1024. At a minimum fee of 1000 microAlgos, notes of 1024, 2000, and 4096 bytes cost 1000, 1098, and 1308. This crate does not add a Falcon signer.
+5. Seed, public-key, nonce, signature, and fixed header fields are rejected at incorrect lengths.
+6. Sender and recipient can decrypt the same envelope through their corresponding ECDH path.
 
 ## Behavioral Examples
 
@@ -86,6 +89,18 @@ remaining able to decode version 1 messages.
 - **Given** a valid v2 envelope
 - **When** any authenticated header byte is changed
 - **Then** `decrypt_message` fails authentication and returns no plaintext
+
+### Scenario: Maximum note and legacy size
+
+- **Given** a standard plaintext of 3954 bytes, or a legacy plaintext of 882 bytes
+- **When** it is encrypted and encoded
+- **Then** the 3954-byte plaintext is a 4096-byte note, the 882-byte plaintext is at most 1024 bytes, and one extra byte past 3954 is rejected before a transaction is built
+
+### Scenario: Note fee
+
+- **Given** a minimum fee of 1000 microAlgos and notes of 1024, 2000, and 4096 bytes
+- **When** `payment_fee` is applied
+- **Then** the fees are 1000, 1098, and 1308 microAlgos
 
 ### Scenario: V1 compatibility
 
@@ -98,7 +113,8 @@ remaining able to decode version 1 messages.
 | Condition | Behavior |
 |-----------|----------|
 | Seed is not 32 bytes | Return `InvalidSeedLength`. |
-| Plaintext exceeds 882 bytes | Return `MessageTooLarge`. |
+| Plaintext exceeds 3954 bytes | Return `MessageTooLarge` before a transaction is built. |
+| Note passed to `payment_fee` exceeds 4096 bytes | Return `NoteTooLarge`. |
 | Envelope is short, malformed, or has an unknown version/protocol | Return a typed envelope/version/protocol error. |
 | AEAD tag or authenticated header does not match | Return `DecryptionError`. |
 | Signing key, verifying key, or signature has an invalid shape | Return a typed public-key or signature error. |
@@ -124,4 +140,5 @@ remaining able to decode version 1 messages.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-14 | CorvidLabs | Adopted the existing v1/v2 standard protocol contract into SpecSync 5.0.1. |
+| 2026-10-16 | CorvidLabs | Raise the note ceiling to 4096 bytes for protocol revision 1.2.1. Standard plaintext max is 3954. Note fees add the consensus surcharge above 1024 bytes on top of one minimum fee. This is not protocol 1.3. |
 | 2026-07-14 | CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa: Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation |

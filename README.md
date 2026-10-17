@@ -16,7 +16,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-algochat = "0.2"
+algochat = "0.3"
 ```
 
 ## Usage

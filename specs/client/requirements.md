@@ -31,7 +31,7 @@ PSK send and receive operations SHALL synchronize contact counters and SHALL val
 
 ## Constraints
 
-- Algorand note size, protocol compatibility, async thread-safety, and public trait signatures remain unchanged.
+- Protocol compatibility, async thread-safety, and public trait signatures remain unchanged. Note capacity follows the protocol ceiling of 4096 bytes.
 
 ## Out of Scope
 

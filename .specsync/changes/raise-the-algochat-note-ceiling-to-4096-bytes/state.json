@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "workflow_origin_version": 1,
+  "id": "raise-the-algochat-note-ceiling-to-4096-bytes",
+  "slug": "raise-the-algochat-note-ceiling-to-4096-bytes",
+  "title": "Raise the AlgoChat note ceiling to 4096 bytes",
+  "description": "Raise the AlgoChat note ceiling to 4096 bytes",
+  "kind": "feature",
+  "state": "draft",
+  "base_commit": "dbb480736cbec3c96431688f7891f66c8a24ccfc",
+  "created_at": 1792194964,
+  "updated_at": 1792195066,
+  "affected_specs": [
+    "protocol",
+    "psk",
+    "client"
+  ],
+  "affected_paths": [
+    "src/types.rs",
+    "src/psk_types.rs",
+    "src/crypto.rs",
+    "src/psk_crypto.rs",
+    "specs/protocol",
+    "specs/psk",
+    "specs/client",
+    "Cargo.toml",
+    "README.md"
+  ],
+  "no_spec_change": false,
+  "no_spec_change_rationale": null,
+  "acceptance_criteria": [
+    "An 882-byte standard plaintext and an 878-byte PSK plaintext still encrypt, and those notes are at most 1024 bytes. Plaintexts of 3954 and 3950 bytes encode to exactly 4096 bytes. One extra byte fails before a transaction is built. payment_fee at min_fee 1000 returns 1000, 1098, and 1308 for notes of 1024, 2000, and 4096. Headers stay 126 and 130 and the tag stays 16. Cargo.toml is 0.3.0."
+  ],
+  "selected_artifacts": [
+    "context",
+    "requirements",
+    "plan",
+    "tasks",
+    "testing",
+    "docs",
+    "design",
+    "research"
+  ],
+  "dependencies": [],
+  "answers": {
+    "architecture_risk": "yes",
+    "public_contract": "yes"
+  }
+}

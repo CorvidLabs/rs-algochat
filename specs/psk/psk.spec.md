@@ -53,7 +53,7 @@ the counter and remaining header metadata into AEAD authentication.
 | `PSK_HEADER_SIZE` | PSK envelope fixed header length, 130 bytes. |
 | `PSK_TAG_SIZE` | PSK ChaCha20-Poly1305 tag length, 16 bytes. |
 | `PSK_ENCRYPTED_SENDER_KEY_SIZE` | PSK wrapped sender-key field length, 48 bytes. |
-| `PSK_MAX_PAYLOAD_SIZE` | Largest PSK plaintext compatible with an Algorand note, 878 bytes. |
+| `PSK_MAX_PAYLOAD_SIZE` | Largest PSK plaintext compatible with a 4096-byte Algorand note, 3950 bytes. |
 | `PSK_SESSION_SIZE` | Number of ratchet positions per session, 100. |
 | `PSK_COUNTER_WINDOW` | Accepted receive-counter replay window, 200. |
 
@@ -71,7 +71,7 @@ the counter and remaining header metadata into AEAD authentication.
 2. V2 authentication covers version, protocol ID, ratchet counter, both public keys, and nonce.
 3. Each counter deterministically selects one session PSK and one position PSK.
 4. The replay set rejects duplicates and counters more than 200 behind the highest accepted counter.
-5. PSK plaintext may not exceed 878 bytes, preserving the Algorand note limit.
+5. PSK plaintext may not exceed 3950 bytes, so the encoded note is at most 4096 bytes. The header stays 130 bytes and the tag stays 16 bytes. An 878-byte plaintext still encrypts, and that note is at most 1024 bytes.
 6. Exchange URIs require scheme/version, address, and an exact 32-byte base64url PSK.
 
 ## Behavioral Examples
@@ -93,7 +93,7 @@ the counter and remaining header metadata into AEAD authentication.
 | Condition | Behavior |
 |-----------|----------|
 | Initial PSK or exchange URI key is not 32 bytes | Return a typed derivation or URI error. |
-| Plaintext exceeds 878 bytes | Return `MessageTooLarge`. |
+| Plaintext exceeds 3950 bytes | Return `MessageTooLarge` before a transaction is built. |
 | Envelope has invalid length, version, or protocol ID | Return the corresponding typed protocol error. |
 | Header, counter, ciphertext, or key material is altered | AEAD authentication fails. |
 | Counter was seen or falls outside the replay window | Return a decryption/replay error. |
@@ -119,4 +119,5 @@ the counter and remaining header metadata into AEAD authentication.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-14 | CorvidLabs | Adopted the existing PSK v1/v2 and ratchet contract into SpecSync 5.0.1. |
+| 2026-10-16 | CorvidLabs | Raise the PSK plaintext maximum to 3950 bytes so a maximum note is 4096 bytes. Header stays 130 and the tag stays 16. An 878-byte plaintext still encrypts. Protocol revision 1.2.1, not 1.3. |
 | 2026-07-14 | CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa: Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation |

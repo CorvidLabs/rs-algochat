@@ -201,4 +201,5 @@ boundaries while delegating cryptographic wire behavior to `protocol` and `psk`.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-14 | CorvidLabs | Adopted the existing client contract into SpecSync 5.0.1 at member-level coverage. |
+| 2026-10-16 | CorvidLabs | Note capacity follows the protocol ceiling of 4096 bytes. Client trait signatures are unchanged. |
 | 2026-07-14 | CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-rust-algochat-implementa: Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Rust AlgoChat implementation |
