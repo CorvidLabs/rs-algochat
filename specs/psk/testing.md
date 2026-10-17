@@ -21,7 +21,9 @@ No manual plaintext inspection replaces deterministic vectors and replay tests.
 
 | Scenario | Expected Behavior |
 |----------|-------------------|
-| 879-byte plaintext | Reject with MessageTooLarge. |
+| 878-byte plaintext | Encrypt, and the note is at most 1024 bytes. |
+| 3950-byte plaintext | Encode to exactly 4096 bytes. |
+| 3951-byte plaintext | Reject with MessageTooLarge before a transaction is built. |
 | Repeated receive counter | Reject as replay. |
 | Counter older than window | Reject before decrypting. |
 | Mutated v2 counter/header | Fail AEAD authentication. |

@@ -20,7 +20,10 @@ No manual cryptographic acceptance substitutes for deterministic native and cros
 
 | Scenario | Expected Behavior |
 |----------|-------------------|
-| 883-byte plaintext | Reject with MessageTooLarge. |
+| 882-byte plaintext | Encrypt, and the note is at most 1024 bytes. |
+| 3954-byte plaintext | Encode to exactly 4096 bytes. |
+| 3955-byte plaintext | Reject with MessageTooLarge before a transaction is built. |
+| Notes of 1024, 2000, and 4096 bytes at min fee 1000 | Fees are 1000, 1098, and 1308. |
 | Unknown version or protocol | Reject with typed protocol error. |
 | Mutated v2 header | Fail AEAD authentication. |
 | Wrong recipient key | Fail without plaintext. |

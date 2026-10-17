@@ -29,7 +29,10 @@ pub const PSK_TAG_SIZE: usize = 16;
 pub const PSK_ENCRYPTED_SENDER_KEY_SIZE: usize = 48;
 
 /// Maximum payload size in bytes for PSK messages.
-pub const PSK_MAX_PAYLOAD_SIZE: usize = 878;
+///
+/// The header stays 130 bytes and the Poly1305 tag stays 16, so this is 3950.
+pub const PSK_MAX_PAYLOAD_SIZE: usize =
+    crate::types::MAX_NOTE_SIZE - PSK_HEADER_SIZE - PSK_TAG_SIZE;
 
 /// Number of positions in a single session before rotating.
 pub const PSK_SESSION_SIZE: u32 = 100;

@@ -35,8 +35,16 @@ pub const TAG_SIZE: usize = 16;
 /// Size of the encrypted sender key (32-byte key + 16-byte tag).
 pub const ENCRYPTED_SENDER_KEY_SIZE: usize = 48;
 
-/// Maximum payload size in bytes.
-pub const MAX_PAYLOAD_SIZE: usize = 882;
+/// Algorand note ceiling in bytes. A 4097-byte note is rejected.
+pub const MAX_NOTE_SIZE: usize = 4096;
+
+/// Note bytes included in one minimum fee before the surcharge starts.
+const NOTE_FEE_INCLUDED_BYTES: usize = 1024;
+
+/// Maximum standard plaintext size in bytes.
+///
+/// The header stays 126 bytes and the Poly1305 tag stays 16, so this is 3954.
+pub const MAX_PAYLOAD_SIZE: usize = MAX_NOTE_SIZE - HEADER_SIZE - TAG_SIZE;
 
 /// Size of the nonce in bytes.
 pub const NONCE_SIZE: usize = 12;
@@ -149,6 +157,10 @@ pub enum AlgoChatError {
     #[error("Transaction failed: {0}")]
     TransactionFailed(String),
 
+    /// Note exceeds the Algorand note ceiling.
+    #[error("Note is {0} bytes (max {MAX_NOTE_SIZE})")]
+    NoteTooLarge(usize),
+
     /// Insufficient balance.
     #[error("Insufficient balance: need {required} microAlgos, have {available}")]
     InsufficientBalance { required: u64, available: u64 },
@@ -175,3 +187,50 @@ pub const SIGNATURE_SIZE: usize = 64;
 
 /// Minimum payment amount in microAlgos (0.001 ALGO).
 pub const MINIMUM_PAYMENT: u64 = 1000;
+
+/// Returns the microAlgo fee for a payment that carries a note.
+///
+/// The first 1024 bytes cost one minimum fee. Each byte past 1024 adds one
+/// ten-thousandth of `min_fee`, rounded up once. This crate has no Falcon
+/// signer, so the scheme component is one minimum fee and the note surcharge
+/// is added on top.
+///
+/// # Errors
+///
+/// Returns [`AlgoChatError::NoteTooLarge`] when `note_size` exceeds
+/// [`MAX_NOTE_SIZE`]. Returns [`AlgoChatError::TransactionFailed`] when the
+/// computed fee does not fit in a `u64`.
+pub fn payment_fee(note_size: usize, min_fee: u64) -> Result<u64> {
+    if note_size > MAX_NOTE_SIZE {
+        return Err(AlgoChatError::NoteTooLarge(note_size));
+    }
+
+    // Bound by MAX_NOTE_SIZE above, so this widening cast cannot truncate.
+    // (over * min_fee + 9999) / 10000 rounds the per-byte surcharge up once.
+    let over = note_size.saturating_sub(NOTE_FEE_INCLUDED_BYTES) as u128;
+    let surcharge = (over * u128::from(min_fee)).div_ceil(10_000);
+    let fee = u128::from(min_fee) + surcharge;
+    u64::try_from(fee).map_err(|_| {
+        AlgoChatError::TransactionFailed("Payment fee does not fit in u64".to_string())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_payment_fees_at_min_fee_1000() {
+        assert_eq!(payment_fee(1024, 1000).unwrap(), 1000);
+        assert_eq!(payment_fee(2000, 1000).unwrap(), 1098);
+        assert_eq!(payment_fee(4096, 1000).unwrap(), 1308);
+    }
+
+    #[test]
+    fn test_payment_fee_rejects_note_past_ceiling() {
+        assert!(matches!(
+            payment_fee(MAX_NOTE_SIZE + 1, 1000),
+            Err(AlgoChatError::NoteTooLarge(_))
+        ));
+    }
+}

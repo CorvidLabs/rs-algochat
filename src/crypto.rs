@@ -507,6 +507,52 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_882_byte_plaintext_succeeds() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+        let message = "A".repeat(882);
+
+        let envelope =
+            encrypt_message(&message, &alice_private, &alice_public, &bob_public).unwrap();
+        let encoded = envelope.encode();
+
+        assert_eq!(
+            encoded.len(),
+            crate::types::HEADER_SIZE + 882 + crate::types::TAG_SIZE
+        );
+        assert!(encoded.len() <= 1024);
+
+        let decrypted = decrypt_message(&envelope, &bob_private, &bob_public)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decrypted.text, message);
+    }
+
+    #[test]
+    fn test_max_plaintext_encodes_to_4096() {
+        let (alice_private, alice_public) = alice_keys();
+        let (bob_private, bob_public) = bob_keys();
+        let message = "A".repeat(MAX_PAYLOAD_SIZE);
+
+        let envelope =
+            encrypt_message(&message, &alice_private, &alice_public, &bob_public).unwrap();
+        let encoded = envelope.encode();
+
+        assert_eq!(MAX_PAYLOAD_SIZE, 3954);
+        assert_eq!(
+            MAX_PAYLOAD_SIZE,
+            crate::types::MAX_NOTE_SIZE - crate::types::HEADER_SIZE - crate::types::TAG_SIZE
+        );
+        assert_eq!(encoded.len(), 4096);
+        assert_eq!(encoded.len(), crate::types::MAX_NOTE_SIZE);
+
+        let decrypted = decrypt_message(&envelope, &bob_private, &bob_public)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decrypted.text, message);
+    }
+
+    #[test]
     fn test_v2_encrypt_decrypt_roundtrip() {
         let (alice_private, alice_public) = alice_keys();
         let (bob_private, bob_public) = bob_keys();
